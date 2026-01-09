@@ -94,7 +94,7 @@ function DashboardLayout({ user, onLogout }) {
     }
 
     return (
-        <div className="min-h-screen flex bg-gray-50 dark:bg-gray-900 transition-colors duration-300">
+        <div className="h-screen overflow-hidden flex bg-gray-50 dark:bg-gray-900 transition-colors duration-300">
             {/* Sidebar */}
             <motion.aside
                 initial={false}
@@ -125,7 +125,7 @@ function DashboardLayout({ user, onLogout }) {
                 </div>
 
                 {/* Menú de navegación */}
-                <nav className="flex-1 p-4 space-y-2">
+                <nav className="flex-1 p-4 space-y-2 overflow-y-auto overflow-x-hidden">
                     {menuItems.map((item) => (
                         <motion.button
                             key={item.path}
@@ -154,7 +154,7 @@ function DashboardLayout({ user, onLogout }) {
                 </nav>
 
                 {/* Footer del Sidebar */}
-                <div className="p-4 border-t border-gray-200 dark:border-gray-700">
+                <div className="p-4 border-t border-gray-200 dark:border-gray-700 shrink-0">
                     {/* Toggle de tema */}
                     <motion.button
                         onClick={toggleTheme}
@@ -185,7 +185,9 @@ function DashboardLayout({ user, onLogout }) {
                                     <p className="font-medium text-gray-800 dark:text-white truncate">
                                         {user?.nombre} {user?.apellidoPaterno}
                                     </p>
-                                    <p className="text-sm text-gray-500 dark:text-gray-400 truncate">Enfermero/a</p>
+                                    <p className="text-sm text-gray-500 dark:text-gray-400 truncate">
+                                        {user?.Cargo?.Nombre_Cargo || 'Usuario'}
+                                    </p>
                                 </motion.div>
                             )}
                         </AnimatePresence>

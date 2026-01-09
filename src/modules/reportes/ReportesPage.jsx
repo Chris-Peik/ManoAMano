@@ -1,9 +1,15 @@
 import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { FileText, AlertTriangle, Plus, Calendar, Building, X, Check, AlertCircle } from 'lucide-react'
+import { FileText, AlertTriangle, Plus, Calendar, Building, X, Check, AlertCircle, Edit, Trash2 } from 'lucide-react'
 import { supabase } from '@/lib/supabaseClient'
+import { hasPermission, PERMISSIONS } from '@/lib/permissions'
 
-const TIPOS_INCIDENTE = ['Caída', 'Medicación incorrecta', 'Flebitis', 'Úlcera por presión', 'Fuga de paciente', 'Agresión', 'Otro']
+const CODIGOS_INCIDENTE = [
+    { id: 'Codigo Azul', label: 'Código Azul', color: 'bg-blue-100 text-blue-700 border-blue-200', dot: 'bg-blue-500', description: 'Paro Cardio-Respiratorio' },
+    { id: 'Codigo Oro', label: 'Código Oro', color: 'bg-yellow-100 text-yellow-700 border-yellow-200', dot: 'bg-yellow-500', description: 'Emergencia Obstétrica' },
+    { id: 'Codigo Blanco', label: 'Código Blanco', color: 'bg-gray-100 text-gray-700 border-gray-200', dot: 'bg-gray-500', description: 'Caída de Paciente' },
+]
+
 const GRAVEDADES = ['Leve', 'Moderada', 'Grave', 'Crítica']
 const ESTADOS_INCIDENTE = ['ABIERTO', 'EN_INVESTIGACION', 'CERRADO']
 
@@ -16,6 +22,7 @@ function ReportesPage() {
     const [pacientes, setPacientes] = useState([])
     const [loading, setLoading] = useState(true)
     const [showModal, setShowModal] = useState(null)
+    const [selectedItem, setSelectedItem] = useState(null)
     const [tabActiva, setTabActiva] = useState('incidentes')
     const [toast, setToast] = useState(null)
     const currentUser = JSON.parse(localStorage.getItem('user') || '{}')
@@ -46,6 +53,34 @@ function ReportesPage() {
     const showToast = (message, type = 'success') => {
         setToast({ message, type })
         setTimeout(() => setToast(null), 3000)
+    }
+
+    const handleEdit = (item, type) => {
+        setSelectedItem(item)
+        setShowModal(type)
+    }
+
+    const handleDelete = async (id, type) => {
+        if (!window.confirm('¿Estás seguro de que deseas eliminar este registro? Esta acción no se puede deshacer.')) return
+
+        setLoading(true)
+        try {
+            const table = type === 'incidentes' ? 'Incidente' : 'ReporteDiario'
+            const { error } = await supabase.from(table).delete().eq('id', id)
+            if (error) throw error
+
+            showToast('Registro eliminado correctamente')
+            fetchData()
+        } catch (err) {
+            console.error(err)
+            showToast('Error al eliminar', 'error')
+        }
+        setLoading(false)
+    }
+
+    const closeModal = () => {
+        setShowModal(null)
+        setSelectedItem(null)
     }
 
     const getGravedadColor = (gravedad) => {
@@ -79,10 +114,12 @@ function ReportesPage() {
                         className="flex items-center gap-2 px-4 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium">
                         <AlertTriangle size={20} /> Nuevo Incidente
                     </motion.button>
-                    <motion.button whileHover={{ scale: 1.02 }} onClick={() => setShowModal('nuevoReporte')}
-                        className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium">
-                        <FileText size={20} /> Reporte Diario
-                    </motion.button>
+                    {hasPermission(currentUser, PERMISSIONS.CAN_CREATE_DAILY_REPORT) && (
+                        <motion.button whileHover={{ scale: 1.02 }} onClick={() => setShowModal('nuevoReporte')}
+                            className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium">
+                            <FileText size={20} /> Reporte Diario
+                        </motion.button>
+                    )}
                 </div>
             </div>
 
@@ -110,17 +147,33 @@ function ReportesPage() {
                             const enf = enfermeros.find(e => e.ID === inc.idEnfermeroReporta)
                             const pac = pacientes.find(p => p.ID === inc.idPaciente)
                             const piso = pisos.find(p => p.ID === inc.idPiso)
+                            const codigo = CODIGOS_INCIDENTE.find(c => c.id === inc.tipo) || { color: 'bg-gray-100 text-gray-700 border-gray-200', label: inc.tipo, description: 'Incidente General' }
+
                             return (
                                 <motion.div key={inc.id} initial={{ opacity: 0 }} animate={{ opacity: 1 }}
-                                    className="p-5 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
+                                    className="p-5 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 group">
                                     <div className="flex flex-wrap gap-2 justify-between items-start mb-3">
-                                        <div className="flex gap-2">
+                                        <div className="flex gap-2 items-center">
+                                            <span className={`px-2.5 py-1 text-xs font-semibold rounded-full border ${codigo.color}`}>
+                                                {codigo.label}
+                                            </span>
                                             <span className={`px-2 py-1 text-xs font-medium rounded-full ${getGravedadColor(inc.gravedad)}`}>{inc.gravedad}</span>
-                                            <span className={`px-2 py-1 text-xs font-medium rounded-full ${getEstadoColor(inc.estado)}`}>{inc.estado?.replace('_', ' ')}</span>
                                         </div>
-                                        <span className="text-sm text-gray-500">{new Date(inc.fechaHora).toLocaleString()}</span>
+                                        <div className="flex items-center gap-2">
+                                            <span className="text-sm text-gray-500 mr-2">{new Date(inc.fechaHora).toLocaleString()}</span>
+                                            {hasPermission(currentUser, PERMISSIONS.CAN_MANAGE_ROLES) && (
+                                                <>
+                                                    <button onClick={() => handleEdit(inc, 'nuevoIncidente')} className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded-lg transition-colors opacity-0 group-hover:opacity-100" title="Editar">
+                                                        <Edit size={16} />
+                                                    </button>
+                                                    <button onClick={() => handleDelete(inc.id, 'incidentes')} className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/30 rounded-lg transition-colors opacity-0 group-hover:opacity-100" title="Eliminar">
+                                                        <Trash2 size={16} />
+                                                    </button>
+                                                </>
+                                            )}
+                                        </div>
                                     </div>
-                                    <h3 className="font-semibold text-gray-800 dark:text-white mb-2">{inc.tipo}</h3>
+                                    <h3 className="font-semibold text-gray-800 dark:text-white mb-2">{codigo.description}</h3>
                                     <p className="text-gray-600 dark:text-gray-300 text-sm">{inc.descripcion}</p>
                                     {inc.accionesTomadas && (
                                         <div className="mt-3 p-3 bg-green-50 dark:bg-green-900/20 rounded-lg">
@@ -154,7 +207,7 @@ function ReportesPage() {
                             const enf = enfermeros.find(e => e.ID === rep.idEnfermeroResponsable)
                             return (
                                 <motion.div key={rep.id} initial={{ opacity: 0 }} animate={{ opacity: 1 }}
-                                    className="p-5 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
+                                    className="p-5 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 group">
                                     <div className="flex justify-between items-start mb-3">
                                         <div className="flex items-center gap-3">
                                             <div className="w-10 h-10 rounded-lg bg-blue-100 dark:bg-blue-900/50 flex items-center justify-center">
@@ -165,7 +218,19 @@ function ReportesPage() {
                                                 <p className="text-sm text-gray-500">{turno?.Nombre} - {rep.fecha}</p>
                                             </div>
                                         </div>
-                                        {enf && <span className="text-xs text-gray-500">Por: {enf.nombre}</span>}
+                                        <div className="flex items-center gap-2">
+                                            {enf && <span className="text-xs text-gray-500 mr-2">Por: {enf.nombre}</span>}
+                                            {hasPermission(currentUser, PERMISSIONS.CAN_MANAGE_ROLES) && (
+                                                <>
+                                                    <button onClick={() => handleEdit(rep, 'nuevoReporte')} className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded-lg transition-colors opacity-0 group-hover:opacity-100" title="Editar">
+                                                        <Edit size={16} />
+                                                    </button>
+                                                    <button onClick={() => handleDelete(rep.id, 'reportes')} className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/30 rounded-lg transition-colors opacity-0 group-hover:opacity-100" title="Eliminar">
+                                                        <Trash2 size={16} />
+                                                    </button>
+                                                </>
+                                            )}
+                                        </div>
                                     </div>
                                     {rep.resumen && <div className="mb-3"><span className="text-xs font-medium text-gray-500">Resumen:</span><p className="text-sm text-gray-700 dark:text-gray-300">{rep.resumen}</p></div>}
                                     {rep.novedades && <div className="mb-3"><span className="text-xs font-medium text-gray-500">Novedades:</span><p className="text-sm text-gray-700 dark:text-gray-300">{rep.novedades}</p></div>}
@@ -180,12 +245,12 @@ function ReportesPage() {
             {/* Modales */}
             <AnimatePresence>
                 {showModal === 'nuevoIncidente' && (
-                    <ModalNuevoIncidente pisos={pisos} pacientes={pacientes} currentUser={currentUser}
-                        onClose={() => setShowModal(null)} onSuccess={() => { fetchData(); setShowModal(null); showToast('Incidente registrado') }} />
+                    <ModalNuevoIncidente pisos={pisos} pacientes={pacientes} currentUser={currentUser} initialData={selectedItem}
+                        onClose={closeModal} onSuccess={() => { fetchData(); closeModal(); showToast('Incidente guardado') }} />
                 )}
                 {showModal === 'nuevoReporte' && (
-                    <ModalNuevoReporte pisos={pisos} turnos={turnos} currentUser={currentUser}
-                        onClose={() => setShowModal(null)} onSuccess={() => { fetchData(); setShowModal(null); showToast('Reporte guardado') }} />
+                    <ModalNuevoReporte pisos={pisos} turnos={turnos} currentUser={currentUser} initialData={selectedItem}
+                        onClose={closeModal} onSuccess={() => { fetchData(); closeModal(); showToast('Reporte guardado') }} />
                 )}
             </AnimatePresence>
 
@@ -201,21 +266,52 @@ function ReportesPage() {
     )
 }
 
-function ModalNuevoIncidente({ pisos, pacientes, currentUser, onClose, onSuccess }) {
-    const [formData, setFormData] = useState({ tipo: '', gravedad: 'Leve', descripcion: '', accionesTomadas: '', idPiso: '', idPaciente: '' })
+function ModalNuevoIncidente({ pisos, pacientes, currentUser, onClose, onSuccess, initialData = null }) {
+    const [formData, setFormData] = useState({
+        tipo: 'Codigo Blanco', gravedad: 'Leve', descripcion: '', accionesTomadas: '', idPiso: '', idPaciente: ''
+    })
     const [loading, setLoading] = useState(false)
+
+    useEffect(() => {
+        if (initialData) {
+            setFormData({
+                tipo: initialData.tipo || 'Codigo Blanco',
+                gravedad: initialData.gravedad || 'Leve',
+                descripcion: initialData.descripcion || '',
+                accionesTomadas: initialData.accionesTomadas || '',
+                idPiso: initialData.idPiso || '',
+                idPaciente: initialData.idPaciente || ''
+            })
+        }
+    }, [initialData])
 
     const handleSubmit = async (e) => {
         e.preventDefault()
         setLoading(true)
         try {
-            const { error } = await supabase.from('Incidente').insert([{
-                tipo: formData.tipo, gravedad: formData.gravedad, descripcion: formData.descripcion,
-                accionesTomadas: formData.accionesTomadas || null, fechaHora: new Date().toISOString(),
+            const dataToSave = {
+                tipo: formData.tipo,
+                gravedad: formData.gravedad,
+                descripcion: formData.descripcion,
+                accionesTomadas: formData.accionesTomadas || null,
                 idPiso: formData.idPiso ? parseInt(formData.idPiso) : null,
                 idPaciente: formData.idPaciente ? parseInt(formData.idPaciente) : null,
                 idEnfermeroReporta: currentUser.ID
-            }])
+            }
+
+            let error = null
+            if (initialData?.id) {
+                // Update
+                const { error: err } = await supabase.from('Incidente').update(dataToSave).eq('id', initialData.id)
+                error = err
+            } else {
+                // Insert
+                const { error: err } = await supabase.from('Incidente').insert([{
+                    ...dataToSave, fechaHora: new Date().toISOString()
+                }])
+                error = err
+            }
+
             if (error) throw error
             onSuccess()
         } catch (err) { console.error(err) }
@@ -226,15 +322,32 @@ function ModalNuevoIncidente({ pisos, pacientes, currentUser, onClose, onSuccess
         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" onClick={onClose}>
             <motion.div initial={{ scale: 0.95 }} animate={{ scale: 1 }} exit={{ scale: 0.95 }} onClick={(e) => e.stopPropagation()} className="w-full max-w-md bg-white dark:bg-gray-800 rounded-xl shadow-xl max-h-[90vh] overflow-hidden">
                 <div className="flex items-center justify-between p-6 border-b border-gray-200 dark:border-gray-700">
-                    <h2 className="text-xl font-semibold text-gray-800 dark:text-white">Registrar Incidente</h2>
+                    <h2 className="text-xl font-semibold text-gray-800 dark:text-white">{initialData ? 'Editar' : 'Registrar'} Incidente</h2>
                     <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-lg"><X size={20} /></button>
                 </div>
                 <form onSubmit={handleSubmit} className="p-6 space-y-4 overflow-y-auto max-h-[60vh]">
-                    <div><label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Tipo de Incidente *</label>
-                        <select required value={formData.tipo} onChange={(e) => setFormData({ ...formData, tipo: e.target.value })} className="w-full px-3 py-2 bg-white dark:bg-gray-700 border border-gray-300 rounded-lg text-gray-800 dark:text-white">
-                            <option value="">Seleccionar</option>
-                            {TIPOS_INCIDENTE.map(t => <option key={t} value={t}>{t}</option>)}
-                        </select></div>
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Código de Incidente *</label>
+                        <div className="grid grid-cols-1 gap-2">
+                            {CODIGOS_INCIDENTE.map(c => (
+                                <div key={c.id}
+                                    onClick={() => setFormData({ ...formData, tipo: c.id })}
+                                    className={`relative flex items-center gap-3 p-3 rounded-xl border-2 cursor-pointer transition-all ${formData.tipo === c.id
+                                        ? `${c.color} border-current ring-1 ring-current bg-opacity-10`
+                                        : 'border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 hover:bg-gray-50'
+                                        }`}>
+                                    <div className={`w-4 h-4 rounded-full ${c.dot} flex items-center justify-center`}>
+                                        {formData.tipo === c.id && <div className="w-1.5 h-1.5 bg-white rounded-full"></div>}
+                                    </div>
+                                    <div className="flex-1">
+                                        <span className="font-semibold block text-sm">{c.label}</span>
+                                        <span className="text-xs opacity-75">{c.description}</span>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+
                     <div><label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Gravedad *</label>
                         <div className="flex gap-2">
                             {GRAVEDADES.map(g => (
@@ -262,7 +375,7 @@ function ModalNuevoIncidente({ pisos, pacientes, currentUser, onClose, onSuccess
                     </div>
                     <div className="flex gap-3 pt-2">
                         <button type="button" onClick={onClose} className="flex-1 py-2 text-gray-600 hover:bg-gray-100 rounded-lg">Cancelar</button>
-                        <button type="submit" disabled={loading} className="flex-1 py-2 bg-red-600 text-white rounded-lg disabled:opacity-50">{loading ? 'Guardando...' : 'Registrar'}</button>
+                        <button type="submit" disabled={loading} className="flex-1 py-2 bg-red-600 text-white rounded-lg disabled:opacity-50">{loading ? 'Guardando...' : (initialData ? 'Actualizar' : 'Registrar')}</button>
                     </div>
                 </form>
             </motion.div>
@@ -270,19 +383,51 @@ function ModalNuevoIncidente({ pisos, pacientes, currentUser, onClose, onSuccess
     )
 }
 
-function ModalNuevoReporte({ pisos, turnos, currentUser, onClose, onSuccess }) {
-    const [formData, setFormData] = useState({ idPiso: '', idTurno: '', fecha: new Date().toISOString().split('T')[0], resumen: '', novedades: '', pendientes: '' })
+function ModalNuevoReporte({ pisos, turnos, currentUser, onClose, onSuccess, initialData = null }) {
+    const [formData, setFormData] = useState({
+        idPiso: '', idTurno: '', fecha: new Date().toISOString().split('T')[0],
+        resumen: '', novedades: '', pendientes: ''
+    })
     const [loading, setLoading] = useState(false)
+
+    useEffect(() => {
+        if (initialData) {
+            setFormData({
+                idPiso: initialData.idPiso || '',
+                idTurno: initialData.idTurno || '',
+                fecha: initialData.fecha || new Date().toISOString().split('T')[0],
+                resumen: initialData.resumen || '',
+                novedades: initialData.novedades || '',
+                pendientes: initialData.pendientes || ''
+            })
+        }
+    }, [initialData])
 
     const handleSubmit = async (e) => {
         e.preventDefault()
         setLoading(true)
         try {
-            const { error } = await supabase.from('ReporteDiario').insert([{
-                idPiso: parseInt(formData.idPiso), idTurno: parseInt(formData.idTurno), fecha: formData.fecha,
-                resumen: formData.resumen || null, novedades: formData.novedades || null, pendientes: formData.pendientes || null,
+            const dataToSave = {
+                idPiso: parseInt(formData.idPiso),
+                idTurno: parseInt(formData.idTurno),
+                fecha: formData.fecha,
+                resumen: formData.resumen || null,
+                novedades: formData.novedades || null,
+                pendientes: formData.pendientes || null,
                 idEnfermeroResponsable: currentUser.ID
-            }])
+            }
+
+            let error = null
+            if (initialData?.id) {
+                // Update
+                const { error: err } = await supabase.from('ReporteDiario').update(dataToSave).eq('id', initialData.id)
+                error = err
+            } else {
+                // Insert
+                const { error: err } = await supabase.from('ReporteDiario').insert([dataToSave])
+                error = err
+            }
+
             if (error) throw error
             onSuccess()
         } catch (err) { console.error(err) }
@@ -293,7 +438,7 @@ function ModalNuevoReporte({ pisos, turnos, currentUser, onClose, onSuccess }) {
         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" onClick={onClose}>
             <motion.div initial={{ scale: 0.95 }} animate={{ scale: 1 }} exit={{ scale: 0.95 }} onClick={(e) => e.stopPropagation()} className="w-full max-w-md bg-white dark:bg-gray-800 rounded-xl shadow-xl max-h-[90vh] overflow-hidden">
                 <div className="flex items-center justify-between p-6 border-b border-gray-200 dark:border-gray-700">
-                    <h2 className="text-xl font-semibold text-gray-800 dark:text-white">Reporte Diario de Piso</h2>
+                    <h2 className="text-xl font-semibold text-gray-800 dark:text-white">{initialData ? 'Editar' : 'Registrar'} Reporte Diario</h2>
                     <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-lg"><X size={20} /></button>
                 </div>
                 <form onSubmit={handleSubmit} className="p-6 space-y-4 overflow-y-auto max-h-[60vh]">
@@ -319,7 +464,7 @@ function ModalNuevoReporte({ pisos, turnos, currentUser, onClose, onSuccess }) {
                         <textarea rows={2} value={formData.pendientes} onChange={(e) => setFormData({ ...formData, pendientes: e.target.value })} className="w-full px-3 py-2 bg-white dark:bg-gray-700 border border-gray-300 rounded-lg text-gray-800 dark:text-white resize-none"></textarea></div>
                     <div className="flex gap-3 pt-2">
                         <button type="button" onClick={onClose} className="flex-1 py-2 text-gray-600 hover:bg-gray-100 rounded-lg">Cancelar</button>
-                        <button type="submit" disabled={loading} className="flex-1 py-2 bg-blue-600 text-white rounded-lg disabled:opacity-50">{loading ? 'Guardando...' : 'Guardar Reporte'}</button>
+                        <button type="submit" disabled={loading} className="flex-1 py-2 bg-blue-600 text-white rounded-lg disabled:opacity-50">{loading ? 'Guardando...' : (initialData ? 'Actualizar' : 'Guardar Reporte')}</button>
                     </div>
                 </form>
             </motion.div>

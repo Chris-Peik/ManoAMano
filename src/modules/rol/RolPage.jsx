@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Calendar, Plus, ChevronLeft, ChevronRight, X, Check, AlertCircle, Trash2, Users } from 'lucide-react'
 import { supabase } from '@/lib/supabaseClient'
+import { hasPermission, PERMISSIONS } from '@/lib/permissions'
 
 const DIAS_SEMANA = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb']
 const MESES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
@@ -27,6 +28,7 @@ function RolPage() {
     const [selectedRol, setSelectedRol] = useState(null)
     const [toast, setToast] = useState(null)
     const [currentUser, setCurrentUser] = useState(null)
+    const [highlightedRolId, setHighlightedRolId] = useState(null)
 
     useEffect(() => {
         const user = localStorage.getItem('user')
@@ -34,7 +36,7 @@ function RolPage() {
         fetchData()
     }, [])
 
-    const canEdit = () => currentUser?.idCargo === 2
+    const canManageRoles = hasPermission(currentUser, PERMISSIONS.CAN_MANAGE_ROLES)
 
     const fetchData = async () => {
         setLoading(true)
@@ -117,7 +119,7 @@ function RolPage() {
                     <h1 className="text-2xl font-bold text-gray-800 dark:text-white">Rol de Enfermería</h1>
                     <p className="text-gray-500 dark:text-gray-400 mt-1">Calendario de turnos y asignaciones</p>
                 </div>
-                {canEdit() && (
+                {canManageRoles && (
                     <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }} onClick={() => setShowModal('nuevoRol')}
                         className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium">
                         <Plus size={20} /> Crear Rol
@@ -135,8 +137,12 @@ function RolPage() {
                         roles.map((rol, index) => {
                             const color = getColorRol(index)
                             const numEnfermeros = getEnfermerosDelRol(rol.id).length
+                            const isHighlighted = highlightedRolId === rol.id
                             return (
-                                <motion.button key={rol.id} whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}
+                                <motion.button key={rol.id}
+                                    whileHover={{ scale: 1.02 }}
+                                    whileTap={{ scale: 0.98 }}
+                                    animate={isHighlighted ? { scale: [1, 1.1, 1], boxShadow: "0 0 15px rgba(59, 130, 246, 0.5)" } : {}}
                                     onClick={() => { setSelectedRol(rol); setShowModal('verRol') }}
                                     className={`flex items-center gap-2 px-3 py-2 rounded-lg ${color.light} ${color.border} border hover:shadow-md transition-all`}>
                                     <div className={`w-3 h-3 rounded ${color.bg}`} />
@@ -148,6 +154,71 @@ function RolPage() {
                             )
                         })
                     )}
+                </div>
+            </div>
+
+            {/* Enfermeros (Cards) */}
+            <div className="mb-8">
+                <h2 className="text-sm font-medium text-gray-600 dark:text-gray-400 mb-3">PERSONAL DE ENFERMERÍA</h2>
+                <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
+                    {(() => {
+                        // Procesar enfermeros para determinar su asignación
+                        const enfermerosConEstado = enfermeros.map(enf => {
+                            // Buscar si tiene alguna asignación
+                            // Usamos asignación a CUALQUIER rol cargado. 
+                            // Podríamos refinar esto para buscar solo roles "activos" si fuera necesario.
+                            const detalle = detalles.find(d => d.idEnfermero === enf.ID)
+                            const rolAsignado = detalle ? roles.find(r => r.id === detalle.idRol) : null
+                            return { ...enf, rolAsignado }
+                        }).sort((a, b) => {
+                            // Priorizar NO asignados (rolAsignado es null)
+                            if (!a.rolAsignado && b.rolAsignado) return -1
+                            if (a.rolAsignado && !b.rolAsignado) return 1
+                            return 0
+                        })
+
+                        return enfermerosConEstado.map(enf => {
+                            const rol = enf.rolAsignado
+                            const colorIndex = rol ? roles.findIndex(r => r.id === rol.id) : -1
+                            const color = rol ? getColorRol(colorIndex) : null
+
+                            return (
+                                <motion.div key={enf.ID}
+                                    whileHover={{ scale: 1.03 }}
+                                    onClick={() => {
+                                        if (rol) {
+                                            setHighlightedRolId(rol.id)
+                                            setTimeout(() => setHighlightedRolId(null), 1500)
+                                            // Opcional: scroll al calendario
+                                        }
+                                    }}
+                                    className={`p-3 rounded-xl border cursor-pointer transition-all relative overflow-hidden group ${rol
+                                        ? `${color.light} ${color.border}`
+                                        : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 hover:border-gray-300'
+                                        }`}>
+                                    {/* Indicador de estado */}
+                                    <div className={`absolute top-0 right-0 p-1.5 rounded-bl-lg ${rol ? color.bg : 'bg-gray-200 dark:bg-gray-700'}`}>
+                                        <div className={`w-1.5 h-1.5 rounded-full ${rol ? 'bg-white' : 'bg-gray-400'}`} />
+                                    </div>
+
+                                    <div className="flex items-center gap-3">
+                                        <div className={`w-10 h-10 rounded-full flex items-center justify-center font-semibold text-sm ${rol ? 'bg-white/50' : 'bg-gray-100 dark:bg-gray-700 text-gray-500'
+                                            }`}>
+                                            {enf.nombre?.charAt(0)}
+                                        </div>
+                                        <div className="flex-1 min-w-0">
+                                            <p className={`text-sm font-semibold truncate ${rol ? color.text : 'text-gray-800 dark:text-white'}`}>
+                                                {enf.nombre}
+                                            </p>
+                                            <p className={`text-xs truncate ${rol ? 'text-gray-600' : 'text-gray-500'}`}>
+                                                {rol ? rol.nombre : 'No asignado'}
+                                            </p>
+                                        </div>
+                                    </div>
+                                </motion.div>
+                            )
+                        })
+                    })()}
                 </div>
             </div>
 
@@ -198,13 +269,18 @@ function RolPage() {
                                             {rolesEnDia.slice(0, 3).map((rol) => {
                                                 const color = getColorRol(rol.colorIndex)
                                                 const numEnf = getEnfermerosDelRol(rol.id).length
+                                                const isHighlighted = highlightedRolId === rol.id
+                                                const isDimmed = highlightedRolId && !isHighlighted
 
                                                 return (
                                                     <button key={rol.id}
                                                         onClick={(e) => handleBarClick(e, rol)}
-                                                        className={`w-full text-left px-1.5 py-0.5 text-[10px] font-medium text-white truncate transition-colors ${color.bg} ${color.hover} ${rol.esInicio && rol.esFin ? 'rounded mx-0.5' :
-                                                            rol.esInicio ? 'rounded-l ml-0.5' :
-                                                                rol.esFin ? 'rounded-r mr-0.5' : ''
+                                                        className={`w-full text-left px-1.5 py-0.5 text-[10px] font-medium text-white truncate transition-all ${color.bg} ${color.hover} 
+                                                            ${isHighlighted ? 'ring-2 ring-blue-400 ring-offset-1 z-10 scale-[1.05] shadow-lg brightness-110' : ''}
+                                                            ${isDimmed ? 'opacity-40 grayscale-[0.5]' : ''}
+                                                            ${rol.esInicio && rol.esFin ? 'rounded mx-0.5' :
+                                                                rol.esInicio ? 'rounded-l ml-0.5' :
+                                                                    rol.esFin ? 'rounded-r mr-0.5' : ''
                                                             }`}>
                                                         {rol.esInicio ? `${rol.nombre} (${numEnf})` : `${numEnf} enf.`}
                                                     </button>
@@ -237,7 +313,7 @@ function RolPage() {
                     <ModalVerRol rol={selectedRol} enfermeros={enfermeros} areas={areas} turnos={turnos}
                         asignados={getEnfermerosDelRol(selectedRol.id)}
                         colorIndex={roles.findIndex(r => r.id === selectedRol.id)}
-                        canEdit={canEdit()}
+                        canEdit={canManageRoles}
                         onClose={() => { setShowModal(null); setSelectedRol(null) }}
                         onAddEnfermero={() => setShowModal('asignarEnfermero')}
                         onRefresh={fetchData} showToast={showToast} />

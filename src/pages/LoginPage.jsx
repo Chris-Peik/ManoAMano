@@ -15,7 +15,7 @@ function LoginPage({ onLoginSuccess }) {
 
         const { data: enfermeroData, error: dbError } = await supabase
             .from('Enfermero')
-            .select('*')
+            .select('*, Cargo:Cargo!fk_Enfermero_ID_Cargo_Cargo(*)')
             .eq('email', email)
             .eq('password', password)
             .single()

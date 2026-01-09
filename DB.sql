@@ -6,11 +6,14 @@ CREATE TABLE public.Administracion_Medicamento (
   Medicamento_ID integer NOT NULL,
   Nombre character varying NOT NULL,
   Fecha_hora timestamp without time zone NOT NULL,
-  Dosis numeric NOT NULL,
   Via character varying NOT NULL,
   Observaciones character varying,
+  idMovimientoInventario integer,
+  idRegistro integer,
   CONSTRAINT Administracion_Medicamento_pkey PRIMARY KEY (ID),
-  CONSTRAINT fk_Medicamento_ID_Administracion_Medicamento FOREIGN KEY (Medicamento_ID) REFERENCES public.Medicamento(ID)
+  CONSTRAINT fk_Medicamento_ID_Administracion_Medicamento FOREIGN KEY (Medicamento_ID) REFERENCES public.Medicamento(ID),
+  CONSTRAINT Administracion_Medicamento_idMovimientoInventario_fkey FOREIGN KEY (idMovimientoInventario) REFERENCES public.MovimientoInventario(id),
+  CONSTRAINT Administracion_Medicamento_idRegistro_fkey FOREIGN KEY (idRegistro) REFERENCES public.Registro_Enfermeria(ID)
 );
 CREATE TABLE public.Asignacion (
   ID integer NOT NULL DEFAULT nextval('"Asignacion_ID_seq"'::regclass),
@@ -30,8 +33,6 @@ CREATE TABLE public.Cama (
   numero integer NOT NULL UNIQUE,
   idHabitacion integer NOT NULL,
   idPaciente integer UNIQUE,
-  fechaAsignacionPaciente timestamp without time zone,
-  fechaSalidaPaciente timestamp without time zone,
   CONSTRAINT Cama_pkey PRIMARY KEY (ID),
   CONSTRAINT fk_Habitación_ID_Cama FOREIGN KEY (idHabitacion) REFERENCES public.Habitación(ID),
   CONSTRAINT fk_Paciente_ID_Cama FOREIGN KEY (idPaciente) REFERENCES public.Paciente(ID)
@@ -74,11 +75,9 @@ CREATE TABLE public.DetalleRol (
 );
 CREATE TABLE public.Diagnostico (
   ID integer NOT NULL DEFAULT nextval('"Diagnostico_ID_seq"'::regclass),
-  ID_Registro integer NOT NULL,
   ID_Padecimiento integer NOT NULL,
   ID_Cuidados integer NOT NULL,
   CONSTRAINT Diagnostico_pkey PRIMARY KEY (ID),
-  CONSTRAINT fk_Registro_Enfermeria_ID_Diagnostico FOREIGN KEY (ID_Registro) REFERENCES public.Registro_Enfermeria(ID),
   CONSTRAINT fk_Padecimiento_ID_Historial FOREIGN KEY (ID_Padecimiento) REFERENCES public.Padecimiento(ID),
   CONSTRAINT fk_Diagnostico_ID_Cuidados_Cuidados FOREIGN KEY (ID_Cuidados) REFERENCES public.Cuidados(ID)
 );
@@ -104,13 +103,14 @@ CREATE TABLE public.Especialidad (
 );
 CREATE TABLE public.EvidenciaCharla (
   id integer NOT NULL DEFAULT nextval('"EvidenciaCharla_id_seq"'::regclass),
-  titulo character varying NOT NULL,
-  descripcion text,
-  fecha date NOT NULL,
-  urlArchivo character varying,
-  idEnfermeroRegistra integer,
+  idInscripcion integer,
+  urlFoto text,
+  urlFoto1 text,
+  urlFoto2 text,
+  urlFoto3 text,
+  fechaSubida timestamp without time zone DEFAULT now(),
   CONSTRAINT EvidenciaCharla_pkey PRIMARY KEY (id),
-  CONSTRAINT EvidenciaCharla_idEnfermeroRegistra_fkey FOREIGN KEY (idEnfermeroRegistra) REFERENCES public.Enfermero(ID)
+  CONSTRAINT EvidenciaCharla_idInscripcion_fkey FOREIGN KEY (idInscripcion) REFERENCES public.InscripcionCurso(id)
 );
 CREATE TABLE public.Habitación (
   ID integer NOT NULL DEFAULT nextval('"Habitación_ID_seq"'::regclass),
@@ -136,15 +136,7 @@ CREATE TABLE public.Incidente (
   CONSTRAINT Incidente_idPaciente_fkey FOREIGN KEY (idPaciente) REFERENCES public.Paciente(ID),
   CONSTRAINT Incidente_idPiso_fkey FOREIGN KEY (idPiso) REFERENCES public.Piso(ID)
 );
-CREATE TABLE public.Ingreso (
-  ID integer NOT NULL DEFAULT nextval('"Ingreso_ID_seq"'::regclass),
-  ID_Paciente integer NOT NULL,
-  ID_Triaje integer NOT NULL,
-  Motivo character varying,
-  CONSTRAINT Ingreso_pkey PRIMARY KEY (ID),
-  CONSTRAINT fk_Paciente_ID_Ingreso FOREIGN KEY (ID_Paciente) REFERENCES public.Paciente(ID),
-  CONSTRAINT fk_Triaje_ID_Ingreso FOREIGN KEY (ID_Triaje) REFERENCES public.Triaje(ID)
-);
+
 CREATE TABLE public.InscripcionCurso (
   id integer NOT NULL DEFAULT nextval('"InscripcionCurso_id_seq"'::regclass),
   idCurso integer,
@@ -178,12 +170,13 @@ CREATE TABLE public.MovimientoInventario (
   idInventario integer,
   tipo character varying NOT NULL,
   cantidad integer NOT NULL,
-  motivo character varying,
   idEnfermero integer,
   fecha timestamp without time zone DEFAULT now(),
+  idPaciente integer,
   CONSTRAINT MovimientoInventario_pkey PRIMARY KEY (id),
   CONSTRAINT MovimientoInventario_idInventario_fkey FOREIGN KEY (idInventario) REFERENCES public.InventarioPiso(id),
-  CONSTRAINT MovimientoInventario_idEnfermero_fkey FOREIGN KEY (idEnfermero) REFERENCES public.Enfermero(ID)
+  CONSTRAINT MovimientoInventario_idEnfermero_fkey FOREIGN KEY (idEnfermero) REFERENCES public.Enfermero(ID),
+  CONSTRAINT MovimientoInventario_idPaciente_fkey FOREIGN KEY (idPaciente) REFERENCES public.Paciente(ID)
 );
 CREATE TABLE public.Paciente (
   ID integer NOT NULL DEFAULT nextval('"Paciente_ID_seq"'::regclass),
@@ -202,14 +195,6 @@ CREATE TABLE public.Padecimiento (
   Descripción character varying NOT NULL,
   CONSTRAINT Padecimiento_pkey PRIMARY KEY (ID)
 );
-CREATE TABLE public.ParticipanteCharla (
-  id integer NOT NULL DEFAULT nextval('"ParticipanteCharla_id_seq"'::regclass),
-  idEvidencia integer,
-  idEnfermero integer,
-  CONSTRAINT ParticipanteCharla_pkey PRIMARY KEY (id),
-  CONSTRAINT ParticipanteCharla_idEvidencia_fkey FOREIGN KEY (idEvidencia) REFERENCES public.EvidenciaCharla(id),
-  CONSTRAINT ParticipanteCharla_idEnfermero_fkey FOREIGN KEY (idEnfermero) REFERENCES public.Enfermero(ID)
-);
 CREATE TABLE public.Piso (
   ID integer NOT NULL DEFAULT nextval('"Piso_ID_seq"'::regclass),
   Número integer NOT NULL UNIQUE,
@@ -220,17 +205,23 @@ CREATE TABLE public.Piso (
 CREATE TABLE public.Registro_Enfermeria (
   ID integer NOT NULL DEFAULT nextval('"Registro_Enfermeria_ID_seq"'::regclass),
   idPaciente integer NOT NULL,
-  idAdministracionMed integer,
-  idAsignacion integer NOT NULL,
+  idEnfermero integer,
   fecha timestamp without time zone NOT NULL,
   observaciones character varying,
   firmado boolean NOT NULL,
-  idSignosVitales integer NOT NULL,
+  idTriaje integer,
+  motivoIngreso character varying,
+  activo boolean DEFAULT false,
+  idCama integer,
+  idDiagnostico integer,
+  fechaAsignacionCama timestamp without time zone,
+  fechaSalidaCama timestamp without time zone,
   CONSTRAINT Registro_Enfermeria_pkey PRIMARY KEY (ID),
   CONSTRAINT fk_Registro_Enfermeria_ID_Paciente_Paciente FOREIGN KEY (idPaciente) REFERENCES public.Paciente(ID),
-  CONSTRAINT fk_Asignacion_ID_Registro_Enfermeria FOREIGN KEY (idAsignacion) REFERENCES public.Asignacion(ID),
-  CONSTRAINT fk_Registro_Enfermeria_ID_Signos_Vitales_Signos_Vitales FOREIGN KEY (idSignosVitales) REFERENCES public.Signos_Vitales(ID),
-  CONSTRAINT fk_Registro_Enfermeria_ID_Admisitracion_Med FOREIGN KEY (idAdministracionMed) REFERENCES public.Administracion_Medicamento(ID)
+  CONSTRAINT Registro_Enfermeria_idEnfermero_fkey FOREIGN KEY (idEnfermero) REFERENCES public.Enfermero(ID),
+  CONSTRAINT Registro_Enfermeria_idTriaje_fkey FOREIGN KEY (idTriaje) REFERENCES public.Triaje(ID),
+  CONSTRAINT Registro_Enfermeria_idCama_fkey FOREIGN KEY (idCama) REFERENCES public.Cama(ID),
+  CONSTRAINT Registro_Enfermeria_idDiagnostico_fkey FOREIGN KEY (idDiagnostico) REFERENCES public.Diagnostico(ID)
 );
 CREATE TABLE public.ReporteDiario (
   id integer NOT NULL DEFAULT nextval('"ReporteDiario_id_seq"'::regclass),
@@ -274,7 +265,9 @@ CREATE TABLE public.Signos_Vitales (
   Mls_orina numeric NOT NULL,
   Hora_medicion timestamp without time zone NOT NULL,
   Observaciones character varying,
-  CONSTRAINT Signos_Vitales_pkey PRIMARY KEY (ID)
+  idRegistro integer,
+  CONSTRAINT Signos_Vitales_pkey PRIMARY KEY (ID),
+  CONSTRAINT Signos_Vitales_idRegistro_fkey FOREIGN KEY (idRegistro) REFERENCES public.Registro_Enfermeria(ID)
 );
 CREATE TABLE public.Triaje (
   ID integer NOT NULL DEFAULT nextval('"Triaje_ID_seq"'::regclass),

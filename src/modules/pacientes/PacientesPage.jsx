@@ -1,19 +1,39 @@
 import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Search, Bed, User, FileText, X, Check, AlertCircle, Activity, UserPlus, Edit, Trash2, Heart, Pill, Stethoscope, ClipboardList, Save, ChevronDown, ChevronUp, Plus, MapPin } from 'lucide-react'
+import { Search, Bed, User, FileText, X, Check, AlertCircle, Activity, UserPlus, Edit, Trash2, Heart, Pill, Stethoscope, ClipboardList, Save, ChevronDown, ChevronUp, Plus, MapPin, LogIn, Clock } from 'lucide-react'
 import { supabase } from '@/lib/supabaseClient'
+import { hasPermission, PERMISSIONS } from '@/lib/permissions'
+
+// Niveles de Triage con colores
+const TRIAGE_LEVELS = [
+    { id: 1, nombre: 'Resucitación', color: 'bg-red-500', textColor: 'text-white', borderColor: 'border-red-500', bgLight: 'bg-red-100 text-red-700' },
+    { id: 2, nombre: 'Emergencia', color: 'bg-orange-500', textColor: 'text-white', borderColor: 'border-orange-500', bgLight: 'bg-orange-100 text-orange-700' },
+    { id: 3, nombre: 'Urgencia', color: 'bg-yellow-400', textColor: 'text-gray-900', borderColor: 'border-yellow-400', bgLight: 'bg-yellow-100 text-yellow-700' },
+    { id: 4, nombre: 'Urgencia Menor', color: 'bg-green-500', textColor: 'text-white', borderColor: 'border-green-500', bgLight: 'bg-green-100 text-green-700' },
+    { id: 5, nombre: 'Sin Urgencia', color: 'bg-blue-500', textColor: 'text-white', borderColor: 'border-blue-500', bgLight: 'bg-blue-100 text-blue-700' },
+]
 
 function PacientesPage() {
     const [pacientes, setPacientes] = useState([])
+    const [triajes, setTriajes] = useState([])
     const [camas, setCamas] = useState([])
     const [pisos, setPisos] = useState([])
     const [habitaciones, setHabitaciones] = useState([])
+    const [registrosEnfermeria, setRegistrosEnfermeria] = useState([])
+    const [signosVitalesAll, setSignosVitalesAll] = useState([])
+    const [enfermeros, setEnfermeros] = useState([])
+    const [roles, setRoles] = useState([])
+    const [detallesRol, setDetallesRol] = useState([])
+    const [areas, setAreas] = useState([])
+    const [turnos, setTurnos] = useState([])
     const [loading, setLoading] = useState(true)
     const [searchTerm, setSearchTerm] = useState('')
     const [showModal, setShowModal] = useState(null)
     const [selectedPaciente, setSelectedPaciente] = useState(null)
     const [selectedPiso, setSelectedPiso] = useState('')
+    const [tabActiva, setTabActiva] = useState('activos') // activos | inactivos | todos
     const [toast, setToast] = useState(null)
+    const currentUser = JSON.parse(localStorage.getItem('user') || '{}')
 
     useEffect(() => {
         fetchData()
@@ -22,16 +42,32 @@ function PacientesPage() {
     const fetchData = async () => {
         setLoading(true)
         try {
-            const [pacRes, camaRes, pisoRes, habRes] = await Promise.all([
+            const [pacRes, triRes, camaRes, pisoRes, habRes, regRes, signosRes, enfRes, rolRes, detRes, areaRes, turnoRes] = await Promise.all([
                 supabase.from('Paciente').select('*'),
+                supabase.from('Triaje').select('*'),
                 supabase.from('Cama').select('*'),
                 supabase.from('Piso').select('*'),
-                supabase.from('Habitación').select('*')
+                supabase.from('Habitación').select('*'),
+                supabase.from('Registro_Enfermeria').select('*'),
+                supabase.from('Signos_Vitales').select('*'),
+                supabase.from('Enfermero').select('*'),
+                supabase.from('RolEnfermeria').select('*'),
+                supabase.from('DetalleRol').select('*'),
+                supabase.from('Área').select('*'),
+                supabase.from('Turno').select('*')
             ])
             if (pacRes.data) setPacientes(pacRes.data)
+            if (triRes.data) setTriajes(triRes.data)
             if (camaRes.data) setCamas(camaRes.data)
             if (pisoRes.data) setPisos(pisoRes.data)
             if (habRes.data) setHabitaciones(habRes.data)
+            if (regRes.data) setRegistrosEnfermeria(regRes.data)
+            if (signosRes.data) setSignosVitalesAll(signosRes.data)
+            if (enfRes.data) setEnfermeros(enfRes.data)
+            if (rolRes.data) setRoles(rolRes.data)
+            if (detRes.data) setDetallesRol(detRes.data)
+            if (areaRes.data) setAreas(areaRes.data)
+            if (turnoRes.data) setTurnos(turnoRes.data)
         } catch (error) {
             console.error('Error:', error)
         }
@@ -41,6 +77,25 @@ function PacientesPage() {
     const showToast = (message, type = 'success') => {
         setToast({ message, type })
         setTimeout(() => setToast(null), 3000)
+    }
+
+    const handleUpdateEnfermero = async (registroId, nuevoEnfermeroId) => {
+        try {
+            const { error } = await supabase
+                .from('Registro_Enfermeria')
+                .update({ idEnfermero: nuevoEnfermeroId || null })
+                .eq('ID', registroId)
+
+            if (error) throw error
+
+            setRegistrosEnfermeria(prev => prev.map(r =>
+                r.ID === registroId ? { ...r, idEnfermero: nuevoEnfermeroId ? parseInt(nuevoEnfermeroId) : null } : r
+            ))
+            showToast('Enfermero asignado actualizado correctmente')
+        } catch (error) {
+            console.error('Error al actualizar enfermero:', error)
+            showToast('Error al actualizar asignación', 'error')
+        }
     }
 
     const getPacientesPorPiso = () => {
@@ -54,27 +109,89 @@ function PacientesPage() {
         })
     }
 
-    const filteredPacientes = pacientes.filter(p =>
-        `${p.Nombre} ${p.A_Paterno} ${p.A_Materno}`.toLowerCase().includes(searchTerm.toLowerCase())
-    )
+    // Helper: obtener registro de ingreso activo de un paciente (registro con activo=true)
+    const getIngresoActivo = (pacienteId) => {
+        return registrosEnfermeria.find(r => r.idPaciente === pacienteId && r.activo)
+    }
+
+    // Helper: obtener el triage de un registro
+    const getTriageInfo = (triageId) => {
+        const triaje = triajes.find(t => t.ID === triageId)
+        const triageLevel = TRIAGE_LEVELS.find(t => t.id === triageId) || TRIAGE_LEVELS.find(t => t.nombre === triaje?.Descripcion)
+        return { triaje, triageLevel }
+    }
+
+    // Filtrar pacientes por búsqueda - separados en activos e inactivos
+    const pacientesActivos = pacientes.filter(p => {
+        const matchSearch = `${p.Nombre} ${p.A_Paterno} ${p.A_Materno}`.toLowerCase().includes(searchTerm.toLowerCase())
+        const ingresoActivo = getIngresoActivo(p.ID)
+        return matchSearch && ingresoActivo
+    })
+
+    const pacientesInactivos = pacientes.filter(p => {
+        const matchSearch = `${p.Nombre} ${p.A_Paterno} ${p.A_Materno}`.toLowerCase().includes(searchTerm.toLowerCase())
+        const ingresoActivo = getIngresoActivo(p.ID)
+        return matchSearch && !ingresoActivo
+    })
 
     const calcularEdad = (fechaNac) => {
         if (!fechaNac) return '-'
         return Math.floor((new Date() - new Date(fechaNac)) / (365.25 * 24 * 60 * 60 * 1000))
     }
 
+    // Contadores para tabs
+    const countActivos = pacientes.filter(p => getIngresoActivo(p.ID)).length
+    const countInactivos = pacientes.filter(p => !getIngresoActivo(p.ID)).length
+
+    // Mis pacientes (Enfermero actual)
+    const misPacientes = pacientesActivos.filter(p => {
+        const ingreso = getIngresoActivo(p.ID)
+        return ingreso?.idEnfermero === currentUser.ID
+    })
+
     return (
         <div className="p-8">
             {/* Header */}
-            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-8">
+            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
                 <div>
                     <h1 className="text-2xl font-bold text-gray-800 dark:text-white">Gestión de Pacientes</h1>
                     <p className="text-gray-500 dark:text-gray-400 mt-1">Ver pacientes, registros de enfermería y expedientes</p>
                 </div>
-                <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }} onClick={() => setShowModal('nuevoPaciente')}
-                    className="flex items-center gap-2 px-4 py-2.5 bg-green-600 hover:bg-green-700 text-white rounded-lg font-medium">
-                    <UserPlus size={20} /> Nuevo Paciente
-                </motion.button>
+                <div className="flex gap-2">
+                    {hasPermission(currentUser, PERMISSIONS.CAN_ADD_PATIENT) && (
+                        <>
+                            <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }} onClick={() => { setSelectedPaciente(null); setShowModal('nuevoIngreso') }}
+                                className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium">
+                                <LogIn size={20} /> Nuevo Ingreso
+                            </motion.button>
+                            <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }} onClick={() => setShowModal('nuevoPaciente')}
+                                className="flex items-center gap-2 px-4 py-2.5 bg-green-600 hover:bg-green-700 text-white rounded-lg font-medium">
+                                <UserPlus size={20} /> Nuevo Paciente
+                            </motion.button>
+                        </>
+                    )}
+                </div>
+            </div>
+
+            {/* Tabs de estado */}
+            <div className="flex gap-1 mb-6 bg-gray-100 dark:bg-gray-800 p-1 rounded-lg w-fit">
+                {[
+                    { key: 'activos', label: 'Activos', count: countActivos, color: 'green' },
+                    { key: 'inactivos', label: 'Dados de Alta', count: countInactivos, color: 'gray' },
+                    { key: 'todos', label: 'Todos', count: pacientes.length, color: 'blue' },
+                ].map(tab => (
+                    <button key={tab.key} onClick={() => setTabActiva(tab.key)}
+                        className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${tabActiva === tab.key
+                            ? 'bg-white dark:bg-gray-700 text-gray-800 dark:text-white shadow-sm'
+                            : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'
+                            }`}>
+                        {tab.label}
+                        <span className={`ml-2 px-1.5 py-0.5 text-xs rounded-full ${tabActiva === tab.key
+                            ? tab.color === 'green' ? 'bg-green-100 text-green-600' : tab.color === 'blue' ? 'bg-blue-100 text-blue-600' : 'bg-gray-200 text-gray-600'
+                            : 'bg-gray-200 dark:bg-gray-600 text-gray-500 dark:text-gray-400'
+                            }`}>{tab.count}</span>
+                    </button>
+                ))}
             </div>
 
             {/* Filtros */}
@@ -127,107 +244,281 @@ function PacientesPage() {
                 </div>
             )}
 
-            {/* Lista de pacientes */}
-            <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
-                <div className="p-4 border-b border-gray-200 dark:border-gray-700">
-                    <h2 className="font-semibold text-gray-800 dark:text-white">Todos los Pacientes ({filteredPacientes.length})</h2>
-                </div>
-                <div className="overflow-x-auto">
-                    <table className="w-full">
-                        <thead className="bg-gray-50 dark:bg-gray-700/50">
-                            <tr>
-                                <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Paciente</th>
-                                <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Identificación</th>
-                                <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Sexo</th>
-                                <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Edad</th>
-                                <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Estado</th>
-                                <th className="px-6 py-3 text-center text-xs font-semibold text-gray-500 uppercase">Ver Expediente</th>
-                            </tr>
-                        </thead>
-                        <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
-                            {loading ? (
-                                <tr><td colSpan={6} className="px-6 py-12 text-center text-gray-500">Cargando...</td></tr>
-                            ) : filteredPacientes.length === 0 ? (
-                                <tr><td colSpan={6} className="px-6 py-12 text-center text-gray-500">No hay pacientes</td></tr>
-                            ) : (
-                                filteredPacientes.map((pac, i) => (
-                                    <motion.tr key={pac.ID} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: i * 0.02 }}
-                                        className="hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer"
-                                        onClick={() => { setSelectedPaciente(pac); setShowModal('verPaciente') }}>
-                                        <td className="px-6 py-4">
-                                            <div className="flex items-center gap-3">
-                                                <div className="w-10 h-10 rounded-full bg-blue-100 dark:bg-blue-900/50 flex items-center justify-center text-blue-600 font-semibold">
-                                                    {pac.Nombre?.charAt(0)}
-                                                </div>
-                                                <div>
-                                                    <p className="font-medium text-gray-800 dark:text-white">{pac.Nombre} {pac.A_Paterno}</p>
-                                                    <p className="text-xs text-gray-500">{pac.A_Materno}</p>
-                                                </div>
+            {/* Tus Pacientes Section */}
+            {(tabActiva === 'activos' || tabActiva === 'todos') && misPacientes.length > 0 && (
+                <div className="mb-8">
+                    <h2 className="text-lg font-semibold text-gray-800 dark:text-white mb-4 flex items-center gap-2">
+                        <Heart className="text-red-500" size={20} /> Tus Pacientes Asignados
+                    </h2>
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                        {misPacientes.map(pac => {
+                            const ingreso = getIngresoActivo(pac.ID)
+                            const triageLevel = TRIAGE_LEVELS.find(t => t.id === ingreso.idTriaje)
+                            return (
+                                <motion.div key={pac.ID} whileHover={{ scale: 1.02 }}
+                                    onClick={() => { setSelectedPaciente(pac); setShowModal('verPaciente') }}
+                                    className="bg-blue-50 dark:bg-blue-900/10 border border-blue-200 dark:border-blue-800 p-4 rounded-xl cursor-pointer">
+                                    <div className="flex justify-between items-start mb-2">
+                                        <div className="flex items-center gap-2">
+                                            <div className="w-8 h-8 rounded-full bg-blue-100 dark:bg-blue-800 flex items-center justify-center text-blue-600 dark:text-blue-300 font-bold text-xs">
+                                                {pac.Nombre.charAt(0)}
                                             </div>
-                                        </td>
-                                        <td className="px-6 py-4 text-gray-600 dark:text-gray-300">{pac.Identificación}</td>
-                                        <td className="px-6 py-4">
-                                            <span className={`px-2 py-1 text-xs rounded-full font-medium ${pac.Sexo === 'M' ? 'bg-blue-100 text-blue-700' : 'bg-pink-100 text-pink-700'}`}>
-                                                {pac.Sexo === 'M' ? 'Masculino' : 'Femenino'}
+                                            <div>
+                                                <p className="font-semibold text-gray-800 dark:text-white text-sm">{pac.Nombre} {pac.A_Paterno}</p>
+                                            </div>
+                                        </div>
+                                        {triageLevel && (
+                                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold text-white ${triageLevel.color}`}>
+                                                {triageLevel.nombre}
                                             </span>
-                                        </td>
-                                        <td className="px-6 py-4 text-gray-600 dark:text-gray-300">{calcularEdad(pac.F_nacimiento)} años</td>
-                                        <td className="px-6 py-4">
-                                            {/* Badges de información faltante */}
-                                            {(() => {
-                                                const camaAsignada = camas.find(c => c.idPaciente === pac.ID)
-                                                const badges = []
-
-                                                if (!camaAsignada) {
-                                                    badges.push({ label: 'Sin Cama', color: 'bg-orange-100 text-orange-700', section: 'ubicacion' })
-                                                }
-                                                // Aquí podrías agregar más validaciones cuando cargues registros, signos, etc.
-
-                                                if (badges.length === 0) {
-                                                    return <span className="px-2 py-1 text-xs rounded-full font-medium bg-green-100 text-green-700">✓ Completo</span>
-                                                }
-
-                                                return (
-                                                    <div className="flex flex-wrap gap-1">
-                                                        {badges.map((badge, idx) => (
-                                                            <button key={idx} onClick={(e) => {
-                                                                e.stopPropagation()
-                                                                setSelectedPaciente(pac)
-                                                                setShowModal('verPaciente')
-                                                            }}
-                                                                className={`px-2 py-1 text-xs rounded-full font-medium ${badge.color} hover:opacity-80 cursor-pointer`}
-                                                                title={`Click para ir a ${badge.section}`}
-                                                            >
-                                                                ⚠ {badge.label}
-                                                            </button>
-                                                        ))}
-                                                    </div>
-                                                )
-                                            })()}
-                                        </td>
-                                        <td className="px-6 py-4 text-center">
-                                            <motion.button whileHover={{ scale: 1.1 }} onClick={(e) => { e.stopPropagation(); setSelectedPaciente(pac); setShowModal('verPaciente') }}
-                                                className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded-lg font-medium">
-                                                Ver Expediente
-                                            </motion.button>
-                                        </td>
-                                    </motion.tr>
-                                ))
-                            )}
-                        </tbody>
-                    </table>
+                                        )}
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-2 mt-3">
+                                        <button className="flex items-center justify-center gap-1.5 py-1.5 px-3 bg-white dark:bg-gray-800 rounded-lg text-xs font-medium text-gray-600 dark:text-gray-300 hover:text-blue-600 shadow-sm">
+                                            <ClipboardList size={14} /> Registros
+                                        </button>
+                                        <button className="flex items-center justify-center gap-1.5 py-1.5 px-3 bg-white dark:bg-gray-800 rounded-lg text-xs font-medium text-gray-600 dark:text-gray-300 hover:text-blue-600 shadow-sm">
+                                            <Activity size={14} /> Signos
+                                        </button>
+                                    </div>
+                                </motion.div>
+                            )
+                        })}
+                    </div>
                 </div>
-            </div>
+            )}
+
+            {/* Tabla de Pacientes Activos */}
+            {(tabActiva === 'activos' || tabActiva === 'todos') && (
+                <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden mb-6">
+                    <div className="p-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                            <div className="w-3 h-3 rounded-full bg-green-500"></div>
+                            <h2 className="font-semibold text-gray-800 dark:text-white">Pacientes Activos ({pacientesActivos.length})</h2>
+                        </div>
+                    </div>
+                    <div className="overflow-x-auto">
+                        <table className="w-full">
+                            <thead className="bg-gray-50 dark:bg-gray-700/50">
+                                <tr>
+                                    <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Paciente</th>
+                                    <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Triage</th>
+                                    <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Sexo</th>
+                                    <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Edad</th>
+                                    <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Enfermero Asignado</th>
+                                    <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Alertas</th>
+                                    <th className="px-6 py-3 text-center text-xs font-semibold text-gray-500 uppercase">Acciones</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
+                                {loading ? (
+                                    <tr><td colSpan={7} className="px-6 py-12 text-center text-gray-500">Cargando...</td></tr>
+                                ) : pacientesActivos.length === 0 ? (
+                                    <tr><td colSpan={7} className="px-6 py-12 text-center text-gray-500">No hay pacientes activos</td></tr>
+                                ) : (
+                                    pacientesActivos.map((pac, i) => (
+                                        <motion.tr key={pac.ID} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: i * 0.02 }}
+                                            className="hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer"
+                                            onClick={() => { setSelectedPaciente(pac); setShowModal('verPaciente') }}>
+                                            <td className="px-6 py-4">
+                                                <div className="flex items-center gap-3">
+                                                    <div className="w-10 h-10 rounded-full bg-green-100 dark:bg-green-900/50 flex items-center justify-center text-green-600 font-semibold">
+                                                        {pac.Nombre?.charAt(0)}
+                                                    </div>
+                                                    <div>
+                                                        <p className="font-medium text-gray-800 dark:text-white">{pac.Nombre} {pac.A_Paterno}</p>
+                                                        <p className="text-xs text-gray-500">{pac.A_Materno}</p>
+                                                    </div>
+                                                </div>
+                                            </td>
+                                            <td className="px-6 py-4">
+                                                {(() => {
+                                                    const ingreso = getIngresoActivo(pac.ID)
+                                                    if (!ingreso) return <span className="text-gray-400 text-xs">-</span>
+                                                    const triageLevel = TRIAGE_LEVELS.find(t => t.id === ingreso.idTriaje)
+                                                    if (!triageLevel) return <span className="text-gray-400 text-xs">-</span>
+                                                    return (
+                                                        <span className={`inline-flex items-center gap-1.5 px-2 py-1 text-xs rounded-full font-medium ${triageLevel.color} ${triageLevel.textColor}`}>
+                                                            <span className="w-2 h-2 rounded-full bg-current opacity-70"></span>
+                                                            {triageLevel.nombre}
+                                                        </span>
+                                                    )
+                                                })()}
+                                            </td>
+                                            <td className="px-6 py-4">
+                                                <span className={`px-2 py-1 text-xs rounded-full font-medium ${pac.Sexo === 'M' ? 'bg-blue-100 text-blue-700' : 'bg-pink-100 text-pink-700'}`}>
+                                                    {pac.Sexo === 'M' ? 'M' : 'F'}
+                                                </span>
+                                            </td>
+                                            <td className="px-6 py-4 text-gray-600 dark:text-gray-300">{calcularEdad(pac.F_nacimiento)} años</td>
+                                            <td className="px-6 py-4" onClick={(e) => e.stopPropagation()}>
+                                                {(() => {
+                                                    const ingreso = getIngresoActivo(pac.ID)
+                                                    const enfermero = enfermeros.find(e => e.ID === ingreso?.idEnfermero)
+                                                    const canEdit = hasPermission(currentUser, PERMISSIONS.CAN_MANAGE_ROLES)
+
+                                                    if (canEdit && ingreso) {
+                                                        return (
+                                                            <select
+                                                                value={ingreso.idEnfermero || ''}
+                                                                onChange={(e) => handleUpdateEnfermero(ingreso.ID, e.target.value)}
+                                                                className="text-sm px-2 py-1 border border-gray-300 rounded-md shadow-sm focus:border-blue-500 focus:ring-blue-500 bg-white dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                                                            >
+                                                                <option value="">Sin asignar</option>
+                                                                {enfermeros.map(enf => (
+                                                                    <option key={enf.ID} value={enf.ID}>
+                                                                        {enf.nombre} {enf.apellidoPaterno}
+                                                                    </option>
+                                                                ))}
+                                                            </select>
+                                                        )
+                                                    }
+
+                                                    return enfermero ? (
+                                                        <span className="text-sm text-gray-700 dark:text-gray-300">
+                                                            {enfermero.nombre} {enfermero.apellidoPaterno}
+                                                        </span>
+                                                    ) : (
+                                                        <span className="text-xs text-gray-400 italic">Sin asignar</span>
+                                                    )
+                                                })()}
+                                            </td>
+                                            <td className="px-6 py-4">
+                                                {(() => {
+                                                    const camaAsignada = camas.find(c => c.idPaciente === pac.ID)
+                                                    const registrosPaciente = registrosEnfermeria.filter(r => r.idPaciente === pac.ID)
+                                                    const regIds = registrosPaciente.map(r => r.ID)
+                                                    const tieneSignos = signosVitalesAll.some(s => regIds.includes(s.idRegistro))
+                                                    const tieneDiagnostico = registrosPaciente.some(r => r.idDiagnostico)
+
+                                                    const alerts = []
+                                                    if (!camaAsignada) alerts.push({ icon: Bed, label: 'Sin Cama', color: 'text-orange-500', bg: 'bg-orange-50' })
+                                                    if (!tieneSignos) alerts.push({ icon: Activity, label: 'Sin Signos', color: 'text-blue-500', bg: 'bg-blue-50' })
+                                                    if (!tieneDiagnostico) alerts.push({ icon: Stethoscope, label: 'Sin Dx', color: 'text-red-500', bg: 'bg-red-50' })
+
+                                                    if (alerts.length === 0) {
+                                                        return <span className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded-full font-medium bg-green-100 text-green-700"><Check size={12} /> OK</span>
+                                                    }
+                                                    return (
+                                                        <div className="flex flex-wrap gap-1">
+                                                            {alerts.map((alert, idx) => (
+                                                                <span key={idx} className={`inline-flex items-center gap-1 px-2 py-1 text-xs rounded-full font-medium ${alert.bg} ${alert.color}`} title={alert.label}>
+                                                                    <alert.icon size={12} />
+                                                                    {alert.label}
+                                                                </span>
+                                                            ))}
+                                                        </div>
+                                                    )
+                                                })()}
+                                            </td>
+                                            <td className="px-6 py-4 text-center">
+                                                <motion.button whileHover={{ scale: 1.1 }} onClick={(e) => { e.stopPropagation(); setSelectedPaciente(pac); setShowModal('verPaciente') }}
+                                                    className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded-lg font-medium">
+                                                    Ver Expediente
+                                                </motion.button>
+                                            </td>
+                                        </motion.tr>
+                                    ))
+                                )}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            )}
+
+            {/* Tabla de Pacientes Inactivos (Dados de Alta) */}
+            {(tabActiva === 'inactivos' || tabActiva === 'todos') && (
+                <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden mb-6">
+                    <div className="p-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                            <div className="w-3 h-3 rounded-full bg-gray-400"></div>
+                            <h2 className="font-semibold text-gray-800 dark:text-white">Dados de Alta / Sin Ingreso ({pacientesInactivos.length})</h2>
+                        </div>
+                    </div>
+                    <div className="overflow-x-auto">
+                        <table className="w-full">
+                            <thead className="bg-gray-50 dark:bg-gray-700/50">
+                                <tr>
+                                    <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Paciente</th>
+                                    <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Identificación</th>
+                                    <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Sexo</th>
+                                    <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Edad</th>
+                                    <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Fecha Nacimiento</th>
+                                    <th className="px-6 py-3 text-center text-xs font-semibold text-gray-500 uppercase">Acciones</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
+                                {loading ? (
+                                    <tr><td colSpan={6} className="px-6 py-12 text-center text-gray-500">Cargando...</td></tr>
+                                ) : pacientesInactivos.length === 0 ? (
+                                    <tr><td colSpan={6} className="px-6 py-12 text-center text-gray-500">No hay pacientes inactivos</td></tr>
+                                ) : (
+                                    pacientesInactivos.map((pac, i) => (
+                                        <motion.tr key={pac.ID} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: i * 0.02 }}
+                                            className="hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer"
+                                            onClick={() => { setSelectedPaciente(pac); setShowModal('verPaciente') }}>
+                                            <td className="px-6 py-4">
+                                                <div className="flex items-center gap-3">
+                                                    <div className="w-10 h-10 rounded-full bg-gray-100 dark:bg-gray-700 flex items-center justify-center text-gray-500 font-semibold">
+                                                        {pac.Nombre?.charAt(0)}
+                                                    </div>
+                                                    <div>
+                                                        <p className="font-medium text-gray-800 dark:text-white">{pac.Nombre} {pac.A_Paterno}</p>
+                                                        <p className="text-xs text-gray-500">{pac.A_Materno}</p>
+                                                    </div>
+                                                </div>
+                                            </td>
+                                            <td className="px-6 py-4 text-gray-600 dark:text-gray-300">{pac.Identificación || '-'}</td>
+                                            <td className="px-6 py-4">
+                                                <span className={`px-2 py-1 text-xs rounded-full font-medium ${pac.Sexo === 'M' ? 'bg-blue-100 text-blue-700' : 'bg-pink-100 text-pink-700'}`}>
+                                                    {pac.Sexo === 'M' ? 'Masculino' : 'Femenino'}
+                                                </span>
+                                            </td>
+                                            <td className="px-6 py-4 text-gray-600 dark:text-gray-300">{calcularEdad(pac.F_nacimiento)} años</td>
+                                            <td className="px-6 py-4 text-gray-600 dark:text-gray-300">{pac.F_nacimiento ? new Date(pac.F_nacimiento).toLocaleDateString() : '-'}</td>
+                                            <td className="px-6 py-4 text-center">
+                                                <div className="flex items-center justify-center gap-2">
+                                                    <motion.button whileHover={{ scale: 1.05 }} onClick={(e) => { e.stopPropagation(); setSelectedPaciente(pac); setShowModal('verPaciente') }}
+                                                        className="px-3 py-1.5 bg-gray-600 hover:bg-gray-700 text-white text-xs rounded-lg font-medium">
+                                                        Ver Historial
+                                                    </motion.button>
+                                                    <motion.button whileHover={{ scale: 1.05 }} onClick={(e) => { e.stopPropagation(); setSelectedPaciente(pac); setShowModal('nuevoIngreso') }}
+                                                        className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-xs rounded-lg font-medium">
+                                                        <LogIn size={14} className="inline mr-1" /> Ingresar
+                                                    </motion.button>
+                                                </div>
+                                            </td>
+                                        </motion.tr>
+                                    ))
+                                )}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            )}
 
             {/* Modales */}
             <AnimatePresence>
                 {showModal === 'verPaciente' && selectedPaciente && (
                     <ModalExpedientePaciente paciente={selectedPaciente} onClose={() => { setShowModal(null); setSelectedPaciente(null) }}
-                        onRefresh={fetchData} showToast={showToast} />
+                        onRefresh={fetchData} showToast={showToast} currentUser={currentUser} />
                 )}
                 {showModal === 'nuevoPaciente' && (
                     <ModalNuevoPaciente onClose={() => setShowModal(null)}
                         onSuccess={() => { fetchData(); setShowModal(null); showToast('Paciente registrado') }} />
+                )}
+                {showModal === 'nuevoIngreso' && (
+                    <ModalNuevoIngreso
+                        pacientes={pacientes}
+                        registros={registrosEnfermeria}
+                        enfermeros={enfermeros}
+                        roles={roles}
+                        detallesRol={detallesRol}
+                        areas={areas}
+                        turnos={turnos}
+                        pacientePreseleccionado={selectedPaciente}
+                        onClose={() => { setShowModal(null); setSelectedPaciente(null); }}
+                        onSuccess={() => { fetchData(); setShowModal(null); setSelectedPaciente(null); showToast('Ingreso registrado'); }} />
                 )}
             </AnimatePresence>
 
@@ -245,7 +536,7 @@ function PacientesPage() {
 }
 
 // Modal grande de expediente del paciente
-function ModalExpedientePaciente({ paciente, onClose, onRefresh, showToast }) {
+function ModalExpedientePaciente({ paciente, onClose, onRefresh, showToast, currentUser }) {
     const [editMode, setEditMode] = useState(false)
     const [formData, setFormData] = useState({ ...paciente })
     const [saving, setSaving] = useState(false)
@@ -271,44 +562,53 @@ function ModalExpedientePaciente({ paciente, onClose, onRefresh, showToast }) {
             const { data: regs } = await supabase.from('Registro_Enfermeria').select('*').eq('idPaciente', paciente.ID).order('fecha', { ascending: false })
             setRegistros(regs || [])
 
-            // Signos vitales de los registros
+            // Signos vitales - ahora desde Signos_Vitales.idRegistro
             if (regs && regs.length > 0) {
-                const signosIds = regs.map(r => r.idSignosVitales).filter(Boolean)
-                if (signosIds.length > 0) {
-                    const { data: signos } = await supabase.from('Signos_Vitales').select('*').in('ID', signosIds)
-                    setSignosVitales(signos || [])
-                }
+                const regIds = regs.map(r => r.ID)
+                const { data: signos } = await supabase.from('Signos_Vitales').select('*').in('idRegistro', regIds)
+                setSignosVitales(signos || [])
 
-                // Medicamentos administrados
-                const medIds = regs.map(r => r.idAdministracionMed).filter(Boolean)
-                if (medIds.length > 0) {
-                    const { data: adminMeds } = await supabase.from('Administracion_Medicamento').select('*').in('ID', medIds)
-                    if (adminMeds) {
-                        const medIdsUnicos = [...new Set(adminMeds.map(m => m.Medicamento_ID))]
-                        const { data: meds } = await supabase.from('Medicamento').select('*').in('ID', medIdsUnicos)
-                        setMedicamentos(adminMeds.map(am => ({
-                            ...am,
-                            medicamento: meds?.find(m => m.ID === am.Medicamento_ID)
+                // Diagnósticos - desde Registro_Enfermeria.idDiagnostico
+                const diagIds = regs.map(r => r.idDiagnostico).filter(Boolean)
+                if (diagIds.length > 0) {
+                    const { data: diags } = await supabase.from('Diagnostico').select('*').in('ID', diagIds)
+                    if (diags && diags.length > 0) {
+                        const padIds = [...new Set(diags.map(d => d.ID_Padecimiento))]
+                        const cuidIds = [...new Set(diags.map(d => d.ID_Cuidados))]
+                        const [{ data: pads }, { data: cuids }] = await Promise.all([
+                            supabase.from('Padecimiento').select('*').in('ID', padIds),
+                            supabase.from('Cuidados').select('*').in('ID', cuidIds)
+                        ])
+                        setDiagnosticos(diags.map(d => ({
+                            ...d,
+                            padecimiento: pads?.find(p => p.ID === d.ID_Padecimiento),
+                            cuidados: cuids?.find(c => c.ID === d.ID_Cuidados)
                         })))
                     }
                 }
 
-                // Diagnósticos
-                const regIds = regs.map(r => r.ID)
-                const { data: diags } = await supabase.from('Diagnostico').select('*').in('ID_Registro', regIds)
-                if (diags && diags.length > 0) {
-                    const padIds = [...new Set(diags.map(d => d.ID_Padecimiento))]
-                    const cuidIds = [...new Set(diags.map(d => d.ID_Cuidados))]
-                    const [{ data: pads }, { data: cuids }] = await Promise.all([
-                        supabase.from('Padecimiento').select('*').in('ID', padIds),
-                        supabase.from('Cuidados').select('*').in('ID', cuidIds)
-                    ])
-                    setDiagnosticos(diags.map(d => ({
-                        ...d,
-                        padecimiento: pads?.find(p => p.ID === d.ID_Padecimiento),
-                        cuidados: cuids?.find(c => c.ID === d.ID_Cuidados)
+                // Medicamentos administrados - ahora desde Administracion_Medicamento.idRegistro
+                const { data: adminMeds } = await supabase.from('Administracion_Medicamento').select('*').in('idRegistro', regIds).order('Fecha_hora', { ascending: false })
+                if (adminMeds && adminMeds.length > 0) {
+                    const movIds = adminMeds.map(m => m.idMovimientoInventario).filter(Boolean)
+                    let movimientos = []
+                    if (movIds.length > 0) {
+                        const { data: movData } = await supabase.from('MovimientoInventario').select('*').in('id', movIds)
+                        movimientos = movData || []
+                    }
+                    const medIdsUnicos = [...new Set(adminMeds.map(m => m.Medicamento_ID))]
+                    const { data: meds } = await supabase.from('Medicamento').select('*').in('ID', medIdsUnicos)
+
+                    setMedicamentos(adminMeds.map(am => ({
+                        ...am,
+                        medicamento: meds?.find(m => m.ID === am.Medicamento_ID),
+                        movimiento: movimientos.find(mov => mov.id === am.idMovimientoInventario)
                     })))
+                } else {
+                    setMedicamentos([])
                 }
+            } else {
+                setMedicamentos([])
             }
 
             // Cargar catálogos para los modales de agregar y cama asignada
@@ -395,12 +695,16 @@ function ModalExpedientePaciente({ paciente, onClose, onRefresh, showToast }) {
                         <div className="flex items-center gap-2">
                             {!editMode && (
                                 <>
-                                    <button onClick={() => setEditMode(true)} className="p-2 hover:bg-white/20 rounded-lg transition-colors" title="Editar">
-                                        <Edit size={20} />
-                                    </button>
-                                    <button onClick={handleEliminar} className="p-2 hover:bg-red-500/50 rounded-lg transition-colors" title="Eliminar">
-                                        <Trash2 size={20} />
-                                    </button>
+                                    {hasPermission(currentUser, PERMISSIONS.CAN_EDIT_PATIENT) && (
+                                        <button onClick={() => setEditMode(true)} className="p-2 hover:bg-white/20 rounded-lg transition-colors" title="Editar">
+                                            <Edit size={20} />
+                                        </button>
+                                    )}
+                                    {hasPermission(currentUser, PERMISSIONS.CAN_DELETE_PATIENT) && (
+                                        <button onClick={handleEliminar} className="p-2 hover:bg-red-500/50 rounded-lg transition-colors" title="Eliminar">
+                                            <Trash2 size={20} />
+                                        </button>
+                                    )}
                                 </>
                             )}
                             <button onClick={onClose} className="p-2 hover:bg-white/20 rounded-lg transition-colors">
@@ -542,20 +846,24 @@ function ModalExpedientePaciente({ paciente, onClose, onRefresh, showToast }) {
                                 <div>
                                     <div className="flex items-center justify-between mb-4">
                                         <h3 className="text-lg font-semibold text-gray-800 dark:text-white">Historial de Signos Vitales</h3>
-                                        <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }} onClick={() => setShowAddModal('signos')}
-                                            className="flex items-center gap-2 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-lg">
-                                            <Plus size={16} /> Registrar Signos
-                                        </motion.button>
+                                        {hasPermission(currentUser, PERMISSIONS.CAN_ADD_VITALS) && (
+                                            <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }} onClick={() => setShowAddModal('signos')}
+                                                className="flex items-center gap-2 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-lg">
+                                                <Plus size={16} /> Registrar Signos
+                                            </motion.button>
+                                        )}
                                     </div>
                                     {signosVitales.length === 0 ? (
                                         <div className="text-center py-16 border-2 border-dashed border-gray-200 dark:border-gray-600 rounded-xl">
                                             <Heart size={56} className="mx-auto mb-4 text-gray-300" />
                                             <p className="text-gray-500 mb-2">No hay signos vitales registrados</p>
                                             <p className="text-sm text-gray-400 mb-4">Registra los signos vitales del paciente para llevar un seguimiento</p>
-                                            <motion.button whileHover={{ scale: 1.02 }} onClick={() => setShowAddModal('signos')}
-                                                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm">
-                                                + Agregar primer registro
-                                            </motion.button>
+                                            {hasPermission(currentUser, PERMISSIONS.CAN_ADD_VITALS) && (
+                                                <motion.button whileHover={{ scale: 1.02 }} onClick={() => setShowAddModal('signos')}
+                                                    className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm">
+                                                    + Agregar primer registro
+                                                </motion.button>
+                                            )}
                                         </div>
                                     ) : (
                                         <div className="space-y-4">
@@ -598,21 +906,16 @@ function ModalExpedientePaciente({ paciente, onClose, onRefresh, showToast }) {
                             {activeSection === 'medicamentos' && (
                                 <div>
                                     <div className="flex items-center justify-between mb-4">
-                                        <h3 className="text-lg font-semibold text-gray-800 dark:text-white">Medicamentos Administrados</h3>
-                                        <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }} onClick={() => setShowAddModal('medicamentos')}
-                                            className="flex items-center gap-2 px-3 py-1.5 bg-purple-600 hover:bg-purple-700 text-white text-sm rounded-lg">
-                                            <Plus size={16} /> Agregar Medicamento
-                                        </motion.button>
+                                        <div>
+                                            <h3 className="text-lg font-semibold text-gray-800 dark:text-white">Medicamentos Administrados</h3>
+                                            <p className="text-sm text-gray-500">Los medicamentos se registran desde el módulo de inventario al realizar una salida</p>
+                                        </div>
                                     </div>
                                     {medicamentos.length === 0 ? (
                                         <div className="text-center py-16 border-2 border-dashed border-gray-200 dark:border-gray-600 rounded-xl">
                                             <Pill size={56} className="mx-auto mb-4 text-gray-300" />
                                             <p className="text-gray-500 mb-2">No hay medicamentos administrados</p>
-                                            <p className="text-sm text-gray-400 mb-4">Registra los medicamentos que se le administran al paciente</p>
-                                            <motion.button whileHover={{ scale: 1.02 }} onClick={() => setShowAddModal('medicamentos')}
-                                                className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-sm">
-                                                + Registrar medicamento
-                                            </motion.button>
+                                            <p className="text-sm text-gray-400 mb-4">Los medicamentos se registran desde el módulo de inventario</p>
                                         </div>
                                     ) : (
                                         <div className="space-y-3">
@@ -623,8 +926,18 @@ function ModalExpedientePaciente({ paciente, onClose, onRefresh, showToast }) {
                                                     </div>
                                                     <div className="flex-1">
                                                         <p className="font-semibold text-gray-800 dark:text-white">{med.Nombre || med.medicamento?.Nombre}</p>
-                                                        <p className="text-sm text-gray-500">Dosis: {med.Dosis} • Vía: {med.Via}</p>
+                                                        <p className="text-sm text-gray-500">
+                                                            {med.medicamento?.Presentacion && <span>{med.medicamento.Presentacion} • </span>}
+                                                            Vía: {med.Via}
+                                                            {med.Observaciones && <span className="ml-2 text-gray-400">• {med.Observaciones}</span>}
+                                                        </p>
                                                     </div>
+                                                    {med.movimiento && (
+                                                        <div className="px-3 py-1.5 bg-purple-100 dark:bg-purple-900/30 rounded-lg text-center">
+                                                            <p className="text-lg font-bold text-purple-600">{med.movimiento.cantidad}</p>
+                                                            <p className="text-xs text-purple-500">unidades</p>
+                                                        </div>
+                                                    )}
                                                     <div className="text-right">
                                                         <p className="text-sm text-gray-800 dark:text-white">{new Date(med.Fecha_hora).toLocaleDateString()}</p>
                                                         <p className="text-xs text-gray-500">{new Date(med.Fecha_hora).toLocaleTimeString()}</p>
@@ -641,20 +954,24 @@ function ModalExpedientePaciente({ paciente, onClose, onRefresh, showToast }) {
                                 <div>
                                     <div className="flex items-center justify-between mb-4">
                                         <h3 className="text-lg font-semibold text-gray-800 dark:text-white">Diagnósticos y Cuidados</h3>
-                                        <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }} onClick={() => setShowAddModal('diagnosticos')}
-                                            className="flex items-center gap-2 px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm rounded-lg">
-                                            <Plus size={16} /> Agregar Diagnóstico
-                                        </motion.button>
+                                        {hasPermission(currentUser, PERMISSIONS.CAN_ADD_DIAGNOSIS) && (
+                                            <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }} onClick={() => setShowAddModal('diagnosticos')}
+                                                className="flex items-center gap-2 px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm rounded-lg">
+                                                <Plus size={16} /> Agregar Diagnóstico
+                                            </motion.button>
+                                        )}
                                     </div>
                                     {diagnosticos.length === 0 ? (
                                         <div className="text-center py-16 border-2 border-dashed border-gray-200 dark:border-gray-600 rounded-xl">
                                             <Stethoscope size={56} className="mx-auto mb-4 text-gray-300" />
                                             <p className="text-gray-500 mb-2">No hay diagnósticos registrados</p>
                                             <p className="text-sm text-gray-400 mb-4">Registra los diagnósticos y cuidados requeridos para el paciente</p>
-                                            <motion.button whileHover={{ scale: 1.02 }} onClick={() => setShowAddModal('diagnosticos')}
-                                                className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm">
-                                                + Agregar diagnóstico
-                                            </motion.button>
+                                            {hasPermission(currentUser, PERMISSIONS.CAN_ADD_DIAGNOSIS) && (
+                                                <motion.button whileHover={{ scale: 1.02 }} onClick={() => setShowAddModal('diagnosticos')}
+                                                    className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm">
+                                                    + Agregar diagnóstico
+                                                </motion.button>
+                                            )}
                                         </div>
                                     ) : (
                                         <div className="space-y-4">
@@ -833,37 +1150,287 @@ function ModalNuevoPaciente({ onClose, onSuccess }) {
     )
 }
 
+// Modal para nuevo ingreso con triage
+function ModalNuevoIngreso({ pacientes, registros, enfermeros = [], roles = [], detallesRol = [], areas = [], turnos = [], onClose, onSuccess, pacientePreseleccionado = null }) {
+    const currentUser = JSON.parse(localStorage.getItem('user') || '{ }')
+    const [formData, setFormData] = useState({
+        idPaciente: pacientePreseleccionado ? pacientePreseleccionado.ID : '',
+        idEnfermero: currentUser.ID || '',
+        idTriage: 1,
+        motivo: ''
+    })
+    const [showNurseSelector, setShowNurseSelector] = useState(false)
+    const [loading, setLoading] = useState(false)
+
+    // Pacientes sin ingreso activo (sin registro con activo=true)
+    const pacientesDisponibles = pacientes.filter(p => !registros.some(r => r.idPaciente === p.ID && r.activo))
+
+    const getEnfermerosAsignados = () => {
+        // Encontrar rol activo (ordenar por fechaInicio desc)
+        const sortedRoles = [...roles].sort((a, b) => new Date(b.fechaInicio) - new Date(a.fechaInicio))
+        const activeRol = sortedRoles[0]
+
+        if (!activeRol) return []
+
+        const activeDeats = detallesRol.filter(d => d.idRol === activeRol.id)
+
+        // Filtrar enfermeros que tienen detalle en este rol
+        return enfermeros.filter(enf => activeDeats.some(d => d.idEnfermero === enf.ID))
+            .map(enf => {
+                const det = activeDeats.find(d => d.idEnfermero === enf.ID)
+                const area = areas.find(a => a.ID === det.idArea)
+                const turno = turnos.find(t => t.ID === det.idTurno)
+                const numPacientes = registros.filter(r => r.idEnfermero === enf.ID && r.activo).length
+
+                return { ...enf, area: area?.nombre, turno: turno?.nombre, numPacientes }
+            })
+            .sort((a, b) => a.numPacientes - b.numPacientes)
+    }
+
+    const enfermerosCards = getEnfermerosAsignados()
+    const selectedNurseInfo = enfermeros.find(e => e.ID == formData.idEnfermero)
+
+    const handleSubmit = async (e) => {
+        e.preventDefault()
+        setLoading(true)
+        try {
+            // Primero verificar/crear el triage si no existe
+            const { data: existingTriage } = await supabase.from('Triaje').select('*').eq('ID', formData.idTriage).single()
+
+            if (!existingTriage) {
+                const triageLevel = TRIAGE_LEVELS.find(t => t.id === formData.idTriage)
+                await supabase.from('Triaje').insert([{
+                    ID: formData.idTriage,
+                    Nivel: formData.idTriage,
+                    Descripcion: triageLevel?.nombre
+                }])
+            }
+
+            // Crear el registro de enfermeria con datos de ingreso
+            const { error } = await supabase.from('Registro_Enfermeria').insert([{
+                idPaciente: parseInt(formData.idPaciente),
+                idEnfermero: parseInt(formData.idEnfermero),
+                fecha: new Date().toISOString(),
+                observaciones: 'Ingreso de paciente',
+                firmado: false,
+                idTriaje: formData.idTriage,
+                motivoIngreso: formData.motivo || null,
+                activo: true
+            }])
+            if (error) throw error
+            onSuccess()
+        } catch (err) {
+            console.error(err)
+            alert('Error al registrar ingreso')
+        }
+        setLoading(false)
+    }
+
+    if (showNurseSelector) {
+        return (
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/50" onClick={() => setShowNurseSelector(false)}>
+                <motion.div initial={{ scale: 0.95 }} animate={{ scale: 1 }} exit={{ scale: 0.95 }} onClick={(e) => e.stopPropagation()} className="w-full max-w-5xl bg-white dark:bg-gray-800 rounded-xl shadow-xl h-[85vh] flex flex-col">
+                    <div className="flex items-center justify-between p-6 border-b border-gray-200 dark:border-gray-700">
+                        <div>
+                            <h2 className="text-xl font-semibold text-gray-800 dark:text-white">Asignar Enfermero</h2>
+                            <p className="text-sm text-gray-500">Selecciona el enfermero responsable para este ingreso</p>
+                        </div>
+                        <button onClick={() => setShowNurseSelector(false)} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg"><X size={20} /></button>
+                    </div>
+
+                    <div className="p-6 overflow-y-auto grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 flex-1 bg-gray-50 dark:bg-gray-900">
+                        {enfermerosCards.length > 0 ? (
+                            enfermerosCards.map(enf => (
+                                <button key={enf.ID} onClick={() => { setFormData({ ...formData, idEnfermero: enf.ID }); setShowNurseSelector(false) }}
+                                    className={`relative p-5 rounded-xl border text-left transition-all group hover:shadow-lg flex flex-col gap-3
+                                        ${formData.idEnfermero == enf.ID
+                                            ? 'bg-blue-50 border-blue-500 ring-1 ring-blue-500 shadow-md transform scale-[1.02]'
+                                            : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 hover:border-blue-300 dark:hover:border-blue-700'
+                                        }`}>
+                                    <div className="flex justify-between items-start">
+                                        <div>
+                                            <div className="font-bold text-lg text-gray-800 dark:text-gray-100 group-hover:text-blue-600 dark:group-hover:text-blue-400">
+                                                {enf.nombre} {enf.apellidoPaterno}
+                                            </div>
+                                            <div className="text-xs text-gray-400 mt-0.5">Licencia: {enf.licencia}</div>
+                                        </div>
+                                        {formData.idEnfermero == enf.ID && <div className="text-blue-600"><Check size={20} className="stroke-[3]" /></div>}
+                                    </div>
+
+                                    <div className="grid grid-cols-2 gap-2 mt-1">
+                                        <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400 bg-gray-50 dark:bg-gray-700/50 p-2 rounded-lg">
+                                            <MapPin size={16} className="text-gray-400" />
+                                            <span className="truncate">{enf.area || 'Sin Área'}</span>
+                                        </div>
+                                        <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400 bg-gray-50 dark:bg-gray-700/50 p-2 rounded-lg">
+                                            <Clock size={16} className="text-gray-400" />
+                                            <span className="truncate">{enf.turno || 'Sin Turno'}</span>
+                                        </div>
+                                    </div>
+
+                                    <div className="mt-auto pt-2">
+                                        <div className={`flex items-center gap-2 text-xs font-semibold px-3 py-1.5 rounded-full w-fit
+                                            ${enf.numPacientes === 0 ? 'bg-green-100 text-green-700' :
+                                                enf.numPacientes < 5 ? 'bg-blue-100 text-blue-700' : 'bg-orange-100 text-orange-700'}`}>
+                                            <User size={14} />
+                                            {enf.numPacientes} pacientes activos
+                                        </div>
+                                    </div>
+                                </button>
+                            ))
+                        ) : (
+                            <div className="col-span-full flex flex-col items-center justify-center text-gray-400 py-10">
+                                <AlertCircle size={48} className="mb-4 opacity-20" />
+                                <p>No se encontraron enfermeros con asignación en el rol actual.</p>
+                                <button type="button" onClick={() => setShowNurseSelector(false)} className="mt-4 text-blue-600 underline text-sm">
+                                    Cancelar selección
+                                </button>
+                            </div>
+                        )}
+                    </div>
+                </motion.div>
+            </motion.div>
+        )
+    }
+
+    return (
+        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" onClick={onClose}>
+            <motion.div initial={{ scale: 0.95 }} animate={{ scale: 1 }} exit={{ scale: 0.95 }} onClick={(e) => e.stopPropagation()} className="w-full max-w-2xl bg-white dark:bg-gray-800 rounded-xl shadow-xl flex flex-col max-h-[90vh]">
+                <div className="flex items-center justify-between p-6 border-b border-gray-200 dark:border-gray-700 shrink-0">
+                    <div>
+                        <h2 className="text-xl font-semibold text-gray-800 dark:text-white">Nuevo Ingreso</h2>
+                        <p className="text-sm text-gray-500">Registrar ingreso de paciente con triage</p>
+                    </div>
+                    <button onClick={onClose} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg"><X size={20} /></button>
+                </div>
+
+                <div className="flex-1 overflow-y-auto p-6 custom-scrollbar">
+                    <form id="ingreso-form" onSubmit={handleSubmit} className="space-y-6">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            {/* Selector de paciente */}
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Paciente *</label>
+                                {pacientePreseleccionado ? (
+                                    <div className="w-full px-3 py-2.5 bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg text-gray-800 dark:text-white font-medium">
+                                        {pacientePreseleccionado.Nombre} {pacientePreseleccionado.A_Paterno}
+                                    </div>
+                                ) : (
+                                    <select required value={formData.idPaciente} onChange={(e) => setFormData({ ...formData, idPaciente: e.target.value })}
+                                        className="w-full px-3 py-2.5 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg text-gray-800 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all">
+                                        <option value="">Seleccionar paciente...</option>
+                                        {pacientesDisponibles.map(p => (
+                                            <option key={p.ID} value={p.ID}>{p.Nombre} {p.A_Paterno} {p.A_Materno}</option>
+                                        ))}
+                                    </select>
+                                )}
+                                {!pacientePreseleccionado && pacientesDisponibles.length === 0 && (
+                                    <p className="text-xs text-orange-500 mt-1">No hay pacientes sin ingreso activo</p>
+                                )}
+                            </div>
+
+                            {/* Selector de Enfermero (Botón con Card) */}
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Enfermero Asignado *</label>
+                                {selectedNurseInfo ? (
+                                    <div className="border border-gray-200 dark:border-gray-600 rounded-xl p-3 bg-gray-50 dark:bg-gray-750 flex justify-between items-center group hover:border-blue-300 transition-colors h-[46px]">
+                                        <div className="truncate pr-2">
+                                            <div className="font-semibold text-gray-800 dark:text-white truncate text-sm">{selectedNurseInfo.nombre} {selectedNurseInfo.apellidoPaterno}</div>
+                                        </div>
+                                        <button type="button" onClick={() => setShowNurseSelector(true)} className="px-3 py-1 text-xs bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 hover:border-blue-500 hover:text-blue-600 rounded transition-colors font-medium whitespace-nowrap">
+                                            Cambiar
+                                        </button>
+                                    </div>
+                                ) : (
+                                    <button type="button" onClick={() => setShowNurseSelector(true)}
+                                        className="w-full py-2.5 bg-white dark:bg-gray-700 border-2 border-dashed border-gray-300 dark:border-gray-600 hover:border-blue-500 hover:text-blue-600 dark:hover:text-blue-400 text-gray-500 rounded-xl flex items-center justify-center gap-2 transition-all h-[46px]">
+                                        <UserPlus size={18} />
+                                        <span className="font-medium text-sm">Asignar Enfermero</span>
+                                    </button>
+                                )}
+                                {!selectedNurseInfo && <p className="text-xs text-red-500 mt-1 ml-1">* Este campo es obligatorio</p>}
+                            </div>
+                        </div>
+
+                        {/* Triage con radio buttons coloridos */}
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">Nivel de Triage *</label>
+                            <div className="space-y-2">
+                                {TRIAGE_LEVELS.map(level => (
+                                    <label key={level.id}
+                                        className={`flex items-center gap-3 p-3 rounded-lg border-2 cursor-pointer transition-all ${formData.idTriage === level.id
+                                            ? `${level.borderColor} ${level.color} ${level.textColor}`
+                                            : 'border-gray-200 dark:border-gray-600 hover:border-gray-300'
+                                            }`}>
+                                        <input type="radio" name="triage" value={level.id} checked={formData.idTriage === level.id}
+                                            onChange={() => setFormData({ ...formData, idTriage: level.id })}
+                                            className="sr-only" />
+                                        <div className={`w-5 h-5 rounded-full ${level.color} flex items-center justify-center shrink-0`}>
+                                            {formData.idTriage === level.id && <Check size={12} className={level.textColor} />}
+                                        </div>
+                                        <div className="flex-1">
+                                            <span className={`font-medium ${formData.idTriage === level.id ? level.textColor : 'text-gray-700 dark:text-gray-300'}`}>
+                                                {level.nombre}
+                                            </span>
+                                        </div>
+                                        <div className={`w-3 h-3 rounded-full ${level.color} shrink-0`}></div>
+                                    </label>
+                                ))}
+                            </div>
+                        </div>
+
+                        {/* Motivo */}
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Motivo del Ingreso</label>
+                            <textarea rows={2} value={formData.motivo} onChange={(e) => setFormData({ ...formData, motivo: e.target.value })}
+                                placeholder="Descripción del motivo de ingreso..."
+                                className="w-full px-3 py-2 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg text-gray-800 dark:text-white resize-none focus:ring-2 focus:ring-blue-500 outline-none" />
+                        </div>
+                    </form>
+                </div>
+
+                <div className="p-4 border-t border-gray-200 dark:border-gray-700 flex justify-end gap-3 shrink-0 bg-gray-50 dark:bg-gray-800 rounded-b-xl">
+                    <button type="button" onClick={onClose} className="px-4 py-2 text-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors">Cancelar</button>
+                    <button type="submit" form="ingreso-form" disabled={loading || !formData.idPaciente || !formData.idEnfermero}
+                        className="px-6 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg disabled:opacity-50 font-medium shadow-md hover:shadow-lg transition-all transform active:scale-95">
+                        {loading ? 'Registrando...' : 'Registrar Ingreso'}
+                    </button>
+                </div>
+            </motion.div>
+        </motion.div>
+    )
+}
+
 // Modal para agregar signos vitales
 function ModalAgregarSignos({ pacienteId, onClose, onSuccess }) {
     const [formData, setFormData] = useState({
         Glucosa: '', Presion_sist: '', Presion_dias: '', Temperatura: '', Oxigeno: '', Evacuaciones: '', Mls_orina: '', Observaciones: ''
     })
     const [loading, setLoading] = useState(false)
-    const currentUser = JSON.parse(localStorage.getItem('user') || '{}')
+    const currentUser = JSON.parse(localStorage.getItem('user') || '{ }')
 
     const handleSubmit = async (e) => {
         e.preventDefault()
         setLoading(true)
         try {
-            // Crear signos vitales
-            const { data: signosData, error: signosError } = await supabase.from('Signos_Vitales').insert([{
+            // Primero crear el registro de enfermería
+            const { data: regData, error: regError } = await supabase.from('Registro_Enfermeria').insert([{
+                idPaciente: pacienteId, idEnfermero: currentUser.ID,
+                fecha: new Date().toISOString(), observaciones: 'Registro de signos vitales',
+                firmado: false
+            }]).select()
+            if (regError) throw regError
+
+            // Luego crear signos vitales con idRegistro
+            const { error: signosError } = await supabase.from('Signos_Vitales').insert([{
+                idRegistro: regData[0].ID,
                 Glucosa: parseFloat(formData.Glucosa), Presion_sist: parseFloat(formData.Presion_sist),
                 Presion_dias: parseFloat(formData.Presion_dias), Temperatura: parseFloat(formData.Temperatura),
                 Oxigeno: parseFloat(formData.Oxigeno), Evacuaciones: parseInt(formData.Evacuaciones) || 0,
                 Mls_orina: parseFloat(formData.Mls_orina) || 0, Hora_medicion: new Date().toISOString(),
                 Observaciones: formData.Observaciones
-            }]).select()
+            }])
             if (signosError) throw signosError
 
-            // Buscar asignación del enfermero actual
-            const { data: asigData } = await supabase.from('Asignacion').select('ID').eq('ID_Enfermero', currentUser.ID).limit(1)
-
-            // Crear registro de enfermería
-            await supabase.from('Registro_Enfermeria').insert([{
-                idPaciente: pacienteId, idAsignacion: asigData?.[0]?.ID || 1,
-                fecha: new Date().toISOString(), observaciones: 'Registro de signos vitales',
-                firmado: false, idSignosVitales: signosData[0].ID
-            }])
             onSuccess()
         } catch (err) { console.error(err) }
         setLoading(false)
@@ -909,34 +1476,31 @@ function ModalAgregarSignos({ pacienteId, onClose, onSuccess }) {
 function ModalAgregarMedicamento({ pacienteId, medicamentos, onClose, onSuccess }) {
     const [formData, setFormData] = useState({ Medicamento_ID: '', Dosis: '', Via: 'Oral', Observaciones: '' })
     const [loading, setLoading] = useState(false)
-    const currentUser = JSON.parse(localStorage.getItem('user') || '{}')
+    const currentUser = JSON.parse(localStorage.getItem('user') || '{ }')
 
     const handleSubmit = async (e) => {
         e.preventDefault()
         setLoading(true)
         try {
             const med = medicamentos.find(m => m.ID === parseInt(formData.Medicamento_ID))
-            // Crear administración de medicamento
-            const { data: adminData, error: adminError } = await supabase.from('Administracion_Medicamento').insert([{
-                Medicamento_ID: parseInt(formData.Medicamento_ID), Nombre: med?.Nombre,
-                Fecha_hora: new Date().toISOString(), Dosis: parseFloat(formData.Dosis),
-                Via: formData.Via, Observaciones: formData.Observaciones
+
+            // Primero crear el registro
+            const { data: regData, error: regError } = await supabase.from('Registro_Enfermeria').insert([{
+                idPaciente: pacienteId, idEnfermero: currentUser.ID,
+                fecha: new Date().toISOString(), observaciones: `Medicamento: ${med?.Nombre}`,
+                firmado: false
             }]).select()
+            if (regError) throw regError
+
+            // Luego crear administración de medicamento con idRegistro
+            const { error: adminError } = await supabase.from('Administracion_Medicamento').insert([{
+                idRegistro: regData[0].ID,
+                Medicamento_ID: parseInt(formData.Medicamento_ID), Nombre: med?.Nombre,
+                Fecha_hora: new Date().toISOString(),
+                Via: formData.Via, Observaciones: formData.Observaciones
+            }])
             if (adminError) throw adminError
 
-            // Buscar asignación
-            const { data: asigData } = await supabase.from('Asignacion').select('ID').eq('ID_Enfermero', currentUser.ID).limit(1)
-            // Crear signos vitales vacíos
-            const { data: signosData } = await supabase.from('Signos_Vitales').insert([{
-                Glucosa: 0, Presion_sist: 0, Presion_dias: 0, Temperatura: 0, Oxigeno: 0, Evacuaciones: 0, Mls_orina: 0, Hora_medicion: new Date().toISOString()
-            }]).select()
-
-            // Crear registro
-            await supabase.from('Registro_Enfermeria').insert([{
-                idPaciente: pacienteId, idAdministracionMed: adminData[0].ID, idAsignacion: asigData?.[0]?.ID || 1,
-                fecha: new Date().toISOString(), observaciones: `Medicamento: ${med?.Nombre}`,
-                firmado: false, idSignosVitales: signosData[0].ID
-            }])
             onSuccess()
         } catch (err) { console.error(err) }
         setLoading(false)
@@ -982,6 +1546,9 @@ function ModalAgregarDiagnostico({ pacienteId, registros, padecimientos, onClose
     const [formData, setFormData] = useState({ ID_Registro: '', ID_Padecimiento: '', cuidadosDescripcion: '' })
     const [loading, setLoading] = useState(false)
 
+    // Solo mostrar registros sin diagnóstico
+    const registrosSinDiagnostico = registros.filter(r => !r.idDiagnostico)
+
     const handleSubmit = async (e) => {
         e.preventDefault()
         setLoading(true)
@@ -992,11 +1559,18 @@ function ModalAgregarDiagnostico({ pacienteId, registros, padecimientos, onClose
             }]).select()
             if (cuidadosError) throw cuidadosError
 
-            // Crear diagnóstico
-            await supabase.from('Diagnostico').insert([{
-                ID_Registro: parseInt(formData.ID_Registro), ID_Padecimiento: parseInt(formData.ID_Padecimiento),
+            // Crear diagnóstico primero
+            const { data: diagData, error: diagError } = await supabase.from('Diagnostico').insert([{
+                ID_Padecimiento: parseInt(formData.ID_Padecimiento),
                 ID_Cuidados: cuidadosData[0].ID
-            }])
+            }]).select()
+            if (diagError) throw diagError
+
+            // Actualizar el registro con el idDiagnostico
+            await supabase.from('Registro_Enfermeria').update({
+                idDiagnostico: diagData[0].ID
+            }).eq('ID', parseInt(formData.ID_Registro))
+
             onSuccess()
         } catch (err) { console.error(err) }
         setLoading(false)
@@ -1010,16 +1584,16 @@ function ModalAgregarDiagnostico({ pacienteId, registros, padecimientos, onClose
                     <button onClick={onClose} className="p-1 hover:bg-white/20 rounded"><X size={20} /></button>
                 </div>
                 <form onSubmit={handleSubmit} className="p-4 space-y-4">
-                    {registros.length === 0 ? (
+                    {registrosSinDiagnostico.length === 0 ? (
                         <div className="text-center py-4 text-yellow-600 bg-yellow-50 rounded-lg">
-                            <p className="text-sm">Primero debes crear un registro de enfermería</p>
+                            <p className="text-sm">{registros.length === 0 ? 'Primero debes crear un registro de enfermería' : 'Todos los registros ya tienen diagnóstico'}</p>
                         </div>
                     ) : (
                         <>
                             <div><label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Registro de Enfermería *</label>
                                 <select required value={formData.ID_Registro} onChange={(e) => setFormData({ ...formData, ID_Registro: e.target.value })} className="w-full px-3 py-2 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg">
                                     <option value="">Seleccionar registro</option>
-                                    {registros.map(r => <option key={r.ID} value={r.ID}>{new Date(r.fecha).toLocaleDateString()} - {new Date(r.fecha).toLocaleTimeString()}</option>)}
+                                    {registrosSinDiagnostico.map(r => <option key={r.ID} value={r.ID}>{new Date(r.fecha).toLocaleDateString()} - {new Date(r.fecha).toLocaleTimeString()}</option>)}
                                 </select></div>
                             <div><label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Padecimiento *</label>
                                 <select required value={formData.ID_Padecimiento} onChange={(e) => setFormData({ ...formData, ID_Padecimiento: e.target.value })} className="w-full px-3 py-2 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg">
@@ -1044,27 +1618,27 @@ function ModalAgregarDiagnostico({ pacienteId, registros, padecimientos, onClose
 function ModalAgregarRegistro({ pacienteId, onClose, onSuccess }) {
     const [formData, setFormData] = useState({ observaciones: '', firmado: false })
     const [loading, setLoading] = useState(false)
-    const currentUser = JSON.parse(localStorage.getItem('user') || '{}')
+    const currentUser = JSON.parse(localStorage.getItem('user') || '{ }')
 
     const handleSubmit = async (e) => {
         e.preventDefault()
         setLoading(true)
         try {
-            // Crear signos vitales vacíos
-            const { data: signosData, error: signosError } = await supabase.from('Signos_Vitales').insert([{
-                Glucosa: 0, Presion_sist: 0, Presion_dias: 0, Temperatura: 0, Oxigeno: 0, Evacuaciones: 0, Mls_orina: 0, Hora_medicion: new Date().toISOString()
+            // Primero crear el registro
+            const { data: regData, error: regError } = await supabase.from('Registro_Enfermeria').insert([{
+                idPaciente: pacienteId, idEnfermero: currentUser.ID,
+                fecha: new Date().toISOString(), observaciones: formData.observaciones,
+                firmado: formData.firmado
             }]).select()
+            if (regError) throw regError
+
+            // Luego crear signos vitales vacíos con idRegistro
+            const { error: signosError } = await supabase.from('Signos_Vitales').insert([{
+                idRegistro: regData[0].ID,
+                Glucosa: 0, Presion_sist: 0, Presion_dias: 0, Temperatura: 0, Oxigeno: 0, Evacuaciones: 0, Mls_orina: 0, Hora_medicion: new Date().toISOString()
+            }])
             if (signosError) throw signosError
 
-            // Buscar asignación
-            const { data: asigData } = await supabase.from('Asignacion').select('ID').eq('ID_Enfermero', currentUser.ID).limit(1)
-
-            // Crear registro
-            await supabase.from('Registro_Enfermeria').insert([{
-                idPaciente: pacienteId, idAsignacion: asigData?.[0]?.ID || 1,
-                fecha: new Date().toISOString(), observaciones: formData.observaciones,
-                firmado: formData.firmado, idSignosVitales: signosData[0].ID
-            }])
             onSuccess()
         } catch (err) { console.error(err) }
         setLoading(false)
@@ -1136,14 +1710,12 @@ function MapaPisoHospital({ paciente, onRefresh, showToast }) {
             // Si ya tiene cama asignada, primero liberarla
             if (camaAsignada) {
                 await supabase.from('Cama').update({
-                    idPaciente: null,
-                    fechaAsignacionPaciente: null
+                    idPaciente: null
                 }).eq('ID', camaAsignada.ID)
             }
             // Asignar nueva cama
             const { error } = await supabase.from('Cama').update({
-                idPaciente: paciente.ID,
-                fechaAsignacionPaciente: new Date().toISOString()
+                idPaciente: paciente.ID
             }).eq('ID', selectedCama.ID)
             if (error) throw error
             showToast(`Cama ${selectedCama.numero} asignada correctamente`)
@@ -1165,9 +1737,7 @@ function MapaPisoHospital({ paciente, onRefresh, showToast }) {
         setAsignando(true)
         try {
             const { error } = await supabase.from('Cama').update({
-                idPaciente: null,
-                fechaAsignacionPaciente: null,
-                fechaSalidaPaciente: new Date().toISOString()
+                idPaciente: null
             }).eq('ID', camaAsignada.ID)
             if (error) throw error
             showToast('Cama liberada correctamente')
