@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Search, Filter, UserPlus, Edit, Trash2, Eye, X, Check, AlertCircle, Calendar } from 'lucide-react'
+import { Search, Filter, UserPlus, Edit, Trash2, Eye, X, Check, AlertCircle } from 'lucide-react'
 import { supabase } from '@/lib/supabaseClient'
 
 // ID del cargo "Coordinador General" - ajustar según tu BD
@@ -108,20 +108,16 @@ function PersonalPage() {
                                 <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">Nombre</th>
                                 <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">Correo</th>
                                 <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">Cargo</th>
-                                <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">Área/Turno</th>
                                 <th className="px-6 py-4 text-right text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">Acciones</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
                             {loading ? (
-                                <tr><td colSpan={5} className="px-6 py-12 text-center text-gray-500">Cargando...</td></tr>
+                                <tr><td colSpan={4} className="px-6 py-12 text-center text-gray-500">Cargando...</td></tr>
                             ) : filteredEnfermeros.length === 0 ? (
-                                <tr><td colSpan={5} className="px-6 py-12 text-center text-gray-500">No se encontraron enfermeros</td></tr>
+                                <tr><td colSpan={4} className="px-6 py-12 text-center text-gray-500">No se encontraron enfermeros</td></tr>
                             ) : (
                                 filteredEnfermeros.map((enf, index) => {
-                                    const asig = getAsignacionActual(enf.ID)
-                                    const area = areas.find(a => a.ID === asig?.ID_Area)
-                                    const turno = turnos.find(t => t.ID === asig?.ID_Turno)
                                     return (
                                         <motion.tr key={enf.ID} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: index * 0.02 }}
                                             className="hover:bg-gray-50 dark:hover:bg-gray-700/50">
@@ -139,25 +135,12 @@ function PersonalPage() {
                                                     {cargos.find(c => c.ID === enf.idCargo)?.Nombre_Cargo || 'Sin cargo'}
                                                 </span>
                                             </td>
-                                            <td className="px-6 py-4">
-                                                {asig ? (
-                                                    <div className="text-sm">
-                                                        <span className="text-gray-800 dark:text-white font-medium">{area?.Nombre || '-'}</span>
-                                                        <span className="text-gray-400 mx-1">|</span>
-                                                        <span className="text-gray-500 dark:text-gray-400">{turno?.Nombre || '-'}</span>
-                                                    </div>
-                                                ) : (
-                                                    <span className="text-gray-400 text-sm">Sin asignar</span>
-                                                )}
-                                            </td>
                                             <td className="px-6 py-4 text-right">
                                                 <div className="flex items-center justify-end gap-1">
                                                     <motion.button whileHover={{ scale: 1.1 }} onClick={() => { setSelectedEnfermero(enf); setShowModal('ver') }}
                                                         className="p-2 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-lg" title="Ver"><Eye size={18} /></motion.button>
                                                     {canEdit() && (
                                                         <>
-                                                            <motion.button whileHover={{ scale: 1.1 }} onClick={() => { setSelectedEnfermero(enf); setShowModal('asignar') }}
-                                                                className="p-2 text-green-600 hover:bg-green-50 dark:hover:bg-green-900/20 rounded-lg" title="Asignar turno/área"><Calendar size={18} /></motion.button>
                                                             <motion.button whileHover={{ scale: 1.1 }} onClick={() => { setSelectedEnfermero(enf); setShowModal('editar') }}
                                                                 className="p-2 text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-900/20 rounded-lg" title="Editar"><Edit size={18} /></motion.button>
                                                             <motion.button whileHover={{ scale: 1.1 }} onClick={() => handleDelete(enf)}
@@ -179,7 +162,7 @@ function PersonalPage() {
                 {showModal === 'nuevo' && <FormEnfermero cargos={cargos} enfermeros={enfermeros} onClose={() => setShowModal(null)} onSuccess={() => { fetchData(); setShowModal(null); showToast('Enfermero registrado') }} />}
                 {showModal === 'editar' && selectedEnfermero && <FormEnfermero enfermero={selectedEnfermero} cargos={cargos} enfermeros={enfermeros} onClose={() => { setShowModal(null); setSelectedEnfermero(null) }} onSuccess={() => { fetchData(); setShowModal(null); setSelectedEnfermero(null); showToast('Enfermero actualizado') }} />}
                 {showModal === 'ver' && selectedEnfermero && <ModalVerEnfermero enfermero={selectedEnfermero} cargos={cargos} enfermeros={enfermeros} areas={areas} turnos={turnos} asignaciones={asignaciones} onClose={() => { setShowModal(null); setSelectedEnfermero(null) }} />}
-                {showModal === 'asignar' && selectedEnfermero && <ModalAsignar enfermero={selectedEnfermero} areas={areas} turnos={turnos} asignacionActual={getAsignacionActual(selectedEnfermero.ID)} onClose={() => { setShowModal(null); setSelectedEnfermero(null) }} onSuccess={() => { fetchData(); setShowModal(null); setSelectedEnfermero(null); showToast('Asignación guardada') }} />}
+
             </AnimatePresence>
 
             <AnimatePresence>
@@ -224,7 +207,7 @@ function FormEnfermero({ enfermero, cargos, enfermeros, onClose, onSuccess }) {
 
     return (
         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" onClick={onClose}>
-            <motion.div initial={{ scale: 0.95 }} animate={{ scale: 1 }} exit={{ scale: 0.95 }} onClick={(e) => e.stopPropagation()} className="w-full max-w-lg bg-white dark:bg-gray-800 rounded-xl shadow-xl overflow-hidden">
+            <motion.div initial={{ scale: 0.95 }} animate={{ scale: 1 }} exit={{ scale: 0.95 }} onClick={(e) => e.stopPropagation()} className="w-full max-w-xl bg-white dark:bg-gray-800 rounded-xl shadow-xl overflow-hidden">
                 <div className="flex items-center justify-between p-6 border-b border-gray-200 dark:border-gray-700">
                     <h2 className="text-xl font-semibold text-gray-800 dark:text-white">{isEditing ? 'Editar' : 'Nuevo'} Enfermero</h2>
                     <button onClick={onClose} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg"><X size={20} className="text-gray-500" /></button>
